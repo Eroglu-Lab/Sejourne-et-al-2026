@@ -1,0 +1,241 @@
+---
+title: "20240111_ctnnd2_rnaseq_de"
+author: "Gabi Sejourne"
+date: "01/11/24"
+output: html_document
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Increase timeout
+options(timeout = 300)
+
+# Fix repos
+options(repos = BiocManager::repositories())
+
+# CRAN installer
+installifnot <- function(pckgName){
+  if (!require(pckgName, character.only = TRUE)) {
+    install.packages(pckgName, dependencies = TRUE)
+    library(pckgName, character.only = TRUE)
+  }
+}
+
+cran_pkgs <- c("BiocManager", "remotes", "tidyverse", "plotly", "RNAseqQC", "ggbreak", "aplot", "patchwork")
+
+for (pkg in cran_pkgs){
+  installifnot(pkg)
+}
+
+# Bioconductor installer
+installBiocifnot <- function(pckgName){
+  if (!require(pckgName, character.only = TRUE)) {
+    BiocManager::install(pckgName)
+    library(pckgName, character.only = TRUE)
+  }
+}
+
+bioc_pkgs <- c("DESeq2", "biomaRt", "org.Mm.eg.db", "clusterProfiler", 
+               "enrichplot", "VennDetail", "EnhancedVolcano", "apeglm", "pheatmap")
+
+for (pkg in bioc_pkgs){
+  installBiocifnot(pkg)
+}
+
+# Install GitHub package separately
+if (!require("rWSBIM2122")) {
+  remotes::install_github("UCLouvain-CBIO/rWSBIM2122")
+  library(rWSBIM2122)
+}
+
+library(rWSBIM2122)
+library(DESeq2)
+library(tidyverse)
+library(clusterProfiler)
+library(biomaRt)
+library(org.Mm.eg.db)
+library(enrichplot)
+library(fgsea)
+library(msigdbr)
+library(VennDetail)
+library(EnhancedVolcano)
+library(apeglm)
+library(readxl)
+library(gplots)
+library(viridis)
+library(RNAseqQC)
+library(dplyr)
+library(ggplot2)
+library(purrr)
+library(tidyr)
+library(tibble)
+library(magrittr)
+library(pheatmap)
+library(ggbreak)
+library(patchwork)
+```
+
+
+
+```{r load data for ACC only}
+counts_dir <- "counts"
+
+counts_list_acc <- 
+  intersect(list.files(counts_dir, pattern='ACC'), 
+                         list.files(counts_dir, pattern = 'txt$')
+)
+#reads in each counts file
+counts_in_acc <- lapply(paste(counts_dir, counts_list_acc, sep = "/"), read.table, header = TRUE)
+#subset just the geneids and counts from each file so that each row is a gene and each column is the counts for a sample
+
+counts_combined_acc <- data.frame(counts_in_acc[[1]][,7])
+for (i in seq.int(2,length(counts_in_acc))){
+  #print(i)
+  current_column <- counts_in_acc[[i]][,7]
+  counts_combined_acc[(i)] <- current_column
+}
+#label rows with gene names
+rows <- counts_in_acc[[1]][,1]
+rownames(counts_combined_acc) = rows
+
+#label columns with names of input files
+cols <- counts_list_acc
+colnames(counts_combined_acc) = cols
+```
+
+
+```{r load ctnnd2 counts for WT vs KO ACC only}
+#group samples by experimental groups
+#Genotype: WT KO 
+#Sex: M F 
+#Region: ACC 
+genotype <- c(1:length(counts_list_acc))
+sex <- c(1:length(counts_list_acc))
+genotype_sex <- c(1:length(counts_list_acc))
+
+for (i in 1:length(counts_list_acc)){
+    genotype[i] <- strsplit(counts_list_acc[i], "_")[[1]][4]
+    sex[i] <- str_sub(strsplit(counts_list_acc[i], "_")[[1]][3], 2, 2)
+    genotype_sex[i] <- paste(genotype[i], sex[i])
+}
+
+#make coldata for DESeq2
+coldata <- data.frame(cols)
+#coldata$sample <- cols
+coldata$Genotype <- genotype
+coldata$Sex <- sex
+
+# Construct a DESeqDataSet object
+dds_acc <- DESeqDataSetFromMatrix(countData = counts_combined_acc,
+                              colData = coldata,
+                              design = ~ Sex + Genotype)
+```
+
+
+```{r load ctnnd2 counts for WT vs KO ACC only}
+# Run DESeq2
+dds_acc <- DESeq(dds_acc)
+
+res_acc <- results(dds_acc,
+               contrast = c("Genotype", "KO", "WT")) # we do this so that `WT` becomes the group we're comparing to
+
+dds_acc$Genotype <- factor(dds_acc$Genotype, levels=c("WT", "KO"))
+
+vsd <- vst(dds_acc, blind=FALSE)
+```
+
+
+```{r}
+# PCA plots for various numbers of PCs to identify which explain genotype variability
+plot_pca_scatters(vsd, n_PCs = 5, color_by = "Genotype", shape_by = "Sex")
+```
+
+```{r}
+# save PCA plots for PCs 1 and 2
+plot_pca(vsd, PC_x = 1, PC_y = 2, color_by = "Genotype", shape_by = "Sex", scale_feats = FALSE, point_rel_size = 4)
+plot_pca
+ggsave(filename = "./plots/pca_acc_PC1_PC2.png", height = 6, width = 6)
+
+# save PCA plots for PCs 2 and 4
+plot_pca(vsd, PC_x = 2, PC_y = 4, color_by = "Genotype", shape_by = "Sex", scale_feats = FALSE, point_rel_size = 4) 
+plot_pca
+ggsave(filename = "./plots/pca_acc_PC2_PC4.png", height = 6, width = 6)
+
+```
+
+```{r Shrinking log fold-changes for low-count genes 1}
+plotMA(res_acc)
+
+resultsNames(dds_acc)
+# Output - 
+# "Intercept"            "Condition_mock_vs_KD"
+
+# How do we switch the order of the second coefficient so that this reads "Condition_KD_vs_mock"
+coldata$Genotype <- factor(coldata$Genotype, levels = c("WT", "KO"))
+
+# Repeat DESeq steps
+# Construct a DESeqDataSet object
+dds_acc <- DESeqDataSetFromMatrix(countData = na.omit(counts_combined_acc),
+                              colData = na.omit(coldata),
+                              design = ~ Genotype) 
+# Run DESeq2
+dds_acc <- DESeq(dds_acc)
+
+resultsNames(dds_acc)
+# Output - 
+# "Intercept"            "Condition_KD_vs_mock"
+
+res_shrunk_acc <- lfcShrink(dds_acc, 
+                        coef = "Genotype_KO_vs_WT",
+                        type = "apeglm") 
+# Here's a nice article on empirical Bayes estimation - http://varianceexplained.org/r/empirical_bayes_baseball/
+
+res_shrunk_acc 
+# Compare the output of - 
+plotMA(res_acc)
+# and
+plotMA(res_shrunk_acc)
+# Convert `res_shrunk_vc` to a dataframe called `res_df_vc`. We will use this for enrichment analyses
+res_df_acc <- as_tibble(res_shrunk_acc, rownames = "genes")
+res_df_acc_filtered <- res_df_acc[!is.na(res_df_acc$padj),]
+
+#save the diffexp data
+write.csv(res_df_acc_filtered, file = "deseq2_acc_bayes_estimation.csv")
+```
+
+```{r make volcano of DESeq2 normalized data with shrinkage}
+gene_list <- c("Ctnnd2", "Rnd2", "Adam33")
+ppi <- 300
+png(file = "./plots/volcano_acc.png", width = 6*ppi, height = 6*ppi, res = ppi, bg = "transparent")
+p <- EnhancedVolcano(res_shrunk_acc,
+    lab = rownames(res_shrunk_acc),
+    selectLab = gene_list,
+    x = 'log2FoldChange',
+    y = 'padj',
+    xlim = c(-0.6, 1),
+    ylim = c(0, 32),
+    widthConnectors = 0.75,
+    pCutoff = 0.05, 
+    FCcutoff = 0.15, 
+    pointSize = 4.0,
+    labSize = 6.0,
+    title = "WT vs KO mRNA expression",
+    subtitle = NULL,
+    legendPosition = "none",
+    col = c('black', 'pink', 'purple', 'red3')) +
+  scale_y_break(c(6,25), scales = 0.1, ticklabels = c(25, 32))
+p
+
+dev.off()
+
+p
+```
+
+
+```{r print session info}
+sessionInfo()
+
+```
+
+

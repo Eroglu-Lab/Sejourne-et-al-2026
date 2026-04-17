@@ -1,0 +1,425 @@
+---
+title: "Oligo counting"
+author: "G Sejourne"
+date: "2026-04-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggsci)
+library(readxl) 
+library(tidyverse)
+library(dplyr)
+```
+
+```{r}
+# data formatting
+# read in quPath cell data
+setwd(getwd())
+df <- read.csv("./DATA/ASPA_Pdgfra_Celldata_20260406.csv")
+df$Image <- substr(df$Image, 5, nchar(df$Image))
+
+dimensions <- read.csv("DATA/ASPA_heights_widths.csv")
+dimensions$Image <- substr(dimensions$Image, 5, nchar(dimensions$Image))
+
+# extract genotype information and rename columns (swap out for alternative method of getting genotypes as needed)
+df <- df %>%
+  mutate(
+    animal = str_extract(Image, "_\\d{6}_") %>%
+                str_replace_all("_", ""),
+    sex = str_extract(Image, "_[FM]_") %>%
+             str_replace_all("_", ""),
+    genotype = str_extract(Image, "_(WT|KO)_") %>% 
+      str_replace_all("_", "")
+  )
+
+colnames(df)[4] <- 'Centroid.Y'
+
+# mutate dataframe to split the column into 10 equally sized bins based on Y-coordinate (Y_max is the centroid.Y of the cell closest to the bottom of the image so we assume this is approximately equal to image height)
+df <- df %>%
+  group_by(Image) %>%
+  mutate(
+    Y_max = max(Centroid.Y, na.rm = TRUE),
+    Y_norm = Centroid.Y / Y_max,
+    bin = 10 * round(Y_norm + 0.05, digits = 1)
+  ) %>%
+  ungroup()
+
+# exclude images filtered out by QC
+exclude_animals = c("551834", "551932", "551933", "551935")
+df <- df[!(df$animal %in% exclude_animals),]
+
+# save binned data as a csv in case you want to feed it into another analysis pipeline or graphpad prism
+write.csv(df, "./DATA/oligo_layers_raw.csv", row.names = FALSE)
+
+print(df)
+print(unique(df$Image))
+print(unique(df$animal))
+
+```
+
+```{r}
+# ROI density data
+unique_images <- unique(df$Image)
+
+# Create an empty data frame to store results
+df_counts_roi <- data.frame(Image = character(),
+                            animal = character(),
+                            genotype = character(),
+                            opc = integer(),
+                            mol = integer(),
+                            oligo = integer(),
+                            int = integer(),
+                            oligo_total = integer(),
+                            area = integer(),
+                            opc_density = integer(),
+                            mol_density = integer(),
+                            int_density = integer(),
+                            oligo_density = integer(),
+                            stringsAsFactors = FALSE)
+
+for (img in unique_images) {
+
+  temp <- df[df$Image == img, ]
+
+  # ---- Compute image areas ----
+  width <- 500 / .8791
+  height <- dimensions[dimensions$Image == img,]$Height / .8791
+  area <- height * width /100000
+  animal <- unique(temp$animal)
+  genotype <- unique(temp$genotype)
+
+  # ---- Count cells in each class ----
+
+  opc_total <- sum(temp$Classification %in% c("ASPA-: Pdgfra+"))
+  mol_total <- sum(temp$Classification == "ASPA+: Pdgfra-")
+  int_total <- sum(temp$Classification %in% c("ASPA-: Pdgfra-"))
+  oligo_total <- sum(temp$Classification %in% c("ASPA+: Pdgfra+", "ASPA-: Pdgfra+", "ASPA+: Pdgfra-", "ASPA-: Pdgfra-")
+  )
+  opc_density = opc_total / area
+  mol_density = mol_total / area
+  int_density = int_total / area
+  oligo_density = oligo_total / area
+
+  # ---- Store results ----
+  df_counts_roi <- rbind(df_counts_roi,
+    data.frame(
+      Image = img,
+      animal = animal,
+      genotype = genotype,
+      opc = opc_total,
+      mol = mol_total,
+      int = int_total,
+      oligo = oligo_total,
+      area = area,
+      opc_density = opc_density,
+      mol_density = mol_density,
+      int_density = int_density,
+      oligo_density = oligo_density
+    )
+  )
+}
+
+write.csv(df_counts_roi, "./DATA/aspa_pdgfra_density_rois.csv", row.names = FALSE)
+```
+
+
+```{r}
+# Assume df has columns: Image, Class
+# First, get unique image IDs
+unique_images <- unique(df$Image)
+
+# Create an empty data frame to store results 
+df_counts <- data.frame(Image = character(),
+                            opc = integer(),
+                            mol = integer(),
+                            oligo = integer(),
+                            int = integer(),
+                     stringsAsFactors = FALSE)
+
+# Loop through each image
+for (img in unique_images) {
+  # calculate total cell counts
+    temp_totals <- df[df$Image == img, ]
+    opc_total <- sum(temp_totals$Classification %in% c("ASPA-: Pdgfra+"))
+    mol_total <- sum(temp_totals$Classification == "ASPA+: Pdgfra-")
+    int_total <- sum(temp_totals$Classification %in% c("ASPA-: Pdgfra-"))
+    oligo_total <- sum(temp_totals$Classification %in% c("ASPA+: Pdgfra+", "ASPA-: Pdgfra+", "ASPA+: Pdgfra-", "ASPA-: Pdgfra-"))
+  
+  # Loop through each bin
+  for (b in c(1:10)) {
+    # Subset the data for the current image
+    temp <- df[df$Image == img & df$bin == b, ]
+    
+    # Count each type in the 'class' column. Divide by bin area in mm^2 (pixel height/aspect ratio * pixel width/aspect ratio)
+    opc_count <- 100 * sum(temp$Classification == "ASPA-: Pdgfra+") /opc_total
+    mol_count <- 100 * sum(temp$Classification == "ASPA+: Pdgfra-")/mol_total
+    int_count <- 100 * sum(temp$Classification == "ASPA-: Pdgfra-") /int_total
+    oligo_count <- 100 * sum(temp$Classification %in% c("ASPA+: Pdgfra+", "ASPA-: Pdgfra+", "ASPA+: Pdgfra-", "ASPA-: Pdgfra-")) / oligo_total
+    
+    # Append the results to the df_counts data frame
+    df_counts <- rbind(df_counts, data.frame(Image = img, bin = b, animal = unique(df[df$Image == img,]$animal), genotype = unique(df[df$Image == img,]$genotype), opc = opc_count, mol = mol_count, int = int_count, oligo = oligo_count))
+  }
+  df_counts <- unique(df_counts)
+}
+
+# View result
+print(df_counts)
+
+# save binned count data as a csv in case you want to feed it into another analysis pipeline or graphpad prism
+write.csv(df_counts, "./DATA/oligo_counts_proportional.csv", row.names = FALSE)
+```
+
+```{r}
+# animal averages (counts per bin)
+df_counts_avg <- df_counts %>%
+  group_by(genotype, animal, bin) %>%
+  summarise(opc = mean(opc),
+            mol = mean(mol), 
+            int = mean(int), 
+            oligo = mean(oligo),
+            .groups = "drop")
+
+print(df_counts_avg)
+
+# save binned animal means count data as a csv in case you want to feed it into another analysis pipeline or graphpad prism
+write.csv(df_counts_avg, "./DATA/oligo_counts_proportional_means.csv", row.names = FALSE)
+```
+
+```{r}
+library(plotrix)
+#line plot for OPC counts
+df_counts_avg_summary <- df_counts_avg %>%
+  group_by(bin, genotype) %>%
+  summarise(
+    mean_opc = mean(opc),
+    se_opc = std.error(opc),
+    .groups = "drop"
+  )
+
+#reorder so WT is listed first in legend
+df_counts_avg_summary$genotype <- factor(df_counts_avg_summary$genotype, levels = c("WT", "KO"))
+
+# Create ggplot with lines and shaded error regions
+OPC_binned_density_plot <- # Create the plot
+ggplot(df_counts_avg_summary, aes(x = bin, y = mean_opc, color = genotype, group = genotype)) +
+  geom_line(size = 1) +  # Line plot for mean Cell.Counts
+  geom_point(size = 3, alpha = 0.5) +
+  geom_ribbon(aes(ymin = mean_opc - se_opc, ymax = mean_opc + se_opc, fill = genotype), alpha = 0.2, color = NA) +  # Error ribbon for standard error
+  labs(
+    x = "Distance from Pia (% total cortical thickness)",
+    y = expression("Proportion within bin (%)"),
+    color = "genotype",
+    fill = "genotype"
+  ) +
+  theme_minimal()  +
+  scale_colour_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_fill_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_x_continuous(breaks = seq(min(df_counts_avg_summary$bin),
+                                max(df_counts_avg_summary$bin),
+                                by = 1)) +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  )
+
+
+png(filename = "p30_Ctnnd2_lineplot_opc_counts_proportional_binned.png", width = 1200, height = 850, res = 300)
+  OPC_binned_density_plot
+  dev.off()
+OPC_binned_density_plot
+```
+
+```{r}
+library(car)
+df_counts_avg$bin <- as.factor(df_counts_avg$bin)
+model_opc = lm(opc ~ bin + genotype + bin:genotype,
+           data = df_counts_avg)
+summary(model_opc)
+
+Anova(model_opc, type = "II")
+
+```
+```{r}
+library(multcompView)
+library(lsmeans)
+library(multcomp)
+
+leastsquare <- lsmeans(model_opc, pairwise ~ genotype | bin, adjust = "tukey")
+summary(leastsquare$contrasts)
+```
+
+
+```{r}
+library(plotrix)
+#line plot for MOL counts
+df_counts_avg_summary <- df_counts_avg %>%
+  group_by(bin, genotype) %>%
+  summarise(
+    mean_mol = mean(mol),
+    se_mol = std.error(mol),
+    .groups = "drop"
+  )
+
+#reorder so WT is listed first in legend
+df_counts_avg_summary$genotype <- factor(df_counts_avg_summary$genotype, levels = c("WT", "KO"))
+
+# Create ggplot with lines and shaded error regions
+mol_binned_density_plot <- # Create the plot
+ggplot(df_counts_avg_summary, aes(x = bin, y = mean_mol, color = genotype, group = genotype)) +
+  geom_line(size = 1) +  # Line plot for mean Cell.Counts
+  geom_point(size = 3, alpha = 0.5) +
+  geom_ribbon(aes(ymin = mean_mol - se_mol, ymax = mean_mol + se_mol, fill = genotype), alpha = 0.2, color = NA) +  # Error ribbon for standard error
+  labs(
+    x = "Distance from Pia (% total cortical thickness)",
+    y = expression("Proportion within bin (%)"),
+    color = "genotype",
+    fill = "genotype"
+  ) +
+  theme_minimal()  +
+  scale_colour_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_fill_manual(values = c("dodgerblue", "firebrick1")) +
+  theme(legend.position = "bottom")  # Optional: Adjust legend position
+
+
+png(filename = "p30_Ctnnd2_lineplot_mol_counts_proportional_binned.png", width = 1200, height = 850, res = 300)
+  mol_binned_density_plot
+  dev.off()
+mol_binned_density_plot
+```
+
+```{r}
+library(car)
+df_counts_avg$bin <- as.factor(df_counts_avg$bin)
+model_mol = lm(mol ~ bin + genotype + bin:genotype,
+           data = df_counts_avg)
+summary(model_mol)
+
+Anova(model_mol, type = "II")
+
+```
+
+```{r}
+library(multcompView)
+library(lsmeans)
+library(multcomp)
+
+leastsquare <- lsmeans(model_mol, pairwise ~ genotype | bin, adjust = "tukey")
+summary(leastsquare$contrasts)
+```
+
+
+```{r}
+library(plotrix)
+#line plot for intermediate oligo counts
+df_counts_avg_summary <- df_counts_avg %>%
+  group_by(bin, genotype) %>%
+  summarise(
+    mean_int = mean(int),
+    se_int = std.error(int),
+    .groups = "drop"
+  )
+
+#reorder so WT is listed first in legend
+df_counts_avg_summary$genotype <- factor(df_counts_avg_summary$genotype, levels = c("WT", "KO"))
+
+# Create ggplot with lines and shaded error regions
+int_binned_density_plot <- # Create the plot
+ggplot(df_counts_avg_summary, aes(x = bin, y = mean_int, color = genotype, group = genotype)) +
+  geom_line(size = 1) +  # Line plot for mean Cell.Counts
+  geom_point(size = 3, alpha = 0.5) +
+  geom_ribbon(aes(ymin = mean_int - se_int, ymax = mean_int + se_int, fill = genotype), alpha = 0.2, color = NA) +  # Error ribbon for standard error
+  labs(
+    x = "Distance from Pia (% total cortical thickness)",
+    y = expression("Proportion within bin (%)"),
+    color = "genotype",
+    fill = "genotype"
+  ) +
+  theme_minimal()  +
+  scale_colour_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_fill_manual(values = c("dodgerblue", "firebrick1")) +
+  theme(legend.position = "bottom")  # Optional: Adjust legend position
+
+
+png(filename = "p30_Ctnnd2_lineplot_int_counts_proportional_binned.png", width = 1200, height = 850, res = 300)
+  int_binned_density_plot
+  dev.off()
+int_binned_density_plot
+```
+
+```{r}
+library(car)
+df_counts_avg$bin <- as.factor(df_counts_avg$bin)
+model_int = lm(int ~ bin + genotype + bin:genotype,
+           data = df_counts_avg)
+summary(model_int)
+
+Anova(model_int, type = "II")
+
+```
+```{r}
+library(multcompView)
+library(lsmeans)
+library(multcomp)
+
+leastsquare <- lsmeans(model_int, pairwise ~ genotype | bin, adjust = "tukey")
+summary(leastsquare$contrasts)
+```
+```{r}
+library(plotrix)
+#line plot for all oligo counts
+df_counts_avg_summary <- df_counts_avg %>%
+  group_by(bin, genotype) %>%
+  summarise(
+    mean_oligo = mean(oligo),
+    se_oligo = std.error(oligo),
+    .groups = "drop"
+  )
+
+#reorder so WT is listed first in legend
+df_counts_avg_summary$genotype <- factor(df_counts_avg_summary$genotype, levels = c("WT", "KO"))
+
+# Create ggplot with lines and shaded error regions
+oligo_binned_density_plot <- # Create the plot
+ggplot(df_counts_avg_summary, aes(x = bin, y = mean_oligo, color = genotype, group = genotype)) +
+  geom_line(size = 1) +  # Line plot for mean Cell.Counts
+  geom_point(size = 3, alpha = 0.5) +
+  geom_ribbon(aes(ymin = mean_oligo - se_oligo, ymax = mean_oligo + se_oligo, fill = genotype), alpha = 0.2, color = NA) +  # Error ribbon for standard error
+  labs(
+    x = "Distance from Pia (% total cortical thickness)",
+    y = expression("Proportion within bin (%)"),
+    color = "genotype",
+    fill = "genotype"
+  ) +
+  theme_minimal()  +
+  scale_colour_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_fill_manual(values = c("dodgerblue", "firebrick1")) +
+  theme(legend.position = "bottom")  # Optional: Adjust legend position
+
+
+png(filename = "p30_Ctnnd2_lineplot_oligo_counts_proportional_binned.png", width = 1200, height = 850, res = 300)
+  oligo_binned_density_plot
+  dev.off()
+oligo_binned_density_plot
+```
+
+```{r}
+library(car)
+df_counts_avg$bin <- as.factor(df_counts_avg$bin)
+model_oligo = lm(oligo ~ bin + genotype + bin:genotype,
+           data = df_counts_avg)
+summary(model_oligo)
+
+Anova(model_oligo, type = "II")
+
+```
+```{r}
+library(multcompView)
+library(lsmeans)
+library(multcomp)
+
+leastsquare <- lsmeans(model_oligo, pairwise ~ genotype | bin, adjust = "tukey")
+summary(leastsquare$contrasts)
+```

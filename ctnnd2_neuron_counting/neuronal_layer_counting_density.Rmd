@@ -1,0 +1,396 @@
+---
+title: "neuronal_layer_counting_density"
+author: "G Sejourne"
+date: "2026-04-09"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggsci)
+library(readxl) 
+library(tidyverse)
+library(dplyr)
+```
+
+```{r}
+# data formatting
+# read in quPath cell data
+setwd(getwd())
+df <- read.csv("./data_qupath/202050825_CTNND2_ASTRO_Neuronal_layers_set2.csv")
+df$Image <- substr(df$Image, 5, nchar(df$Image))
+
+# extract genotype information and rename columns (swap out for alternative method of getting genotypes as needed)
+df <- df %>%
+  mutate(
+    animal = substr(Image, 0, 7) %>% str_remove_all("_"),
+    genotype = substr(Image, 10, 11)
+  )
+
+colnames(df)[9] <- 'Centroid.Y'
+
+# mutate dataframe to split the column into 10 equally sized bins based on Y-coordinate (Y_max is the centroid.Y of the cell closest to the bottom of the image so we assume this is approximately equal to image height)
+df <- df %>%
+  group_by(Image) %>%
+  mutate(
+    Y_max = max(Centroid.Y, na.rm = TRUE),
+    Y_norm = Centroid.Y / Y_max,
+    bin = 10 * round(Y_norm + 0.05, digits = 1)
+  ) %>%
+  ungroup()
+
+# exclude images filtered out by QC
+exclude_images = c(
+  "40720_7F_WT_S2L_Merged.tif_rotated.tif_subtracted.tif",
+  #"41180_2F_WT_S1R_Merged.tif_rotated.tif_subtracted.tif",
+  "50981_4F_WT_S4L_Merged.tif_rotated.tif_subtracted.tif",
+  "40720_5F_KO_S1R_Merged.tif_rotated.tif_subtracted.tif",
+"40720_5F_KO_S4L_Merged.tif_rotated.tif_subtracted.tif",
+"41180_3F_KO_S2R_Merged.tif_rotated.tif_subtracted.tif", 
+"50981_1F_KO_S1R_Merged.tif_rotated.tif_subtracted.tif")
+df <- df[!(df$Image %in% exclude_images),]
+
+# save binned data as a csv in case you want to feed it into another analysis pipeline or graphpad prism
+write.csv(df, "./data_qupath/neuronal_layers_raw.csv", row.names = FALSE)
+
+print(df)
+print(unique(df$Image))
+print(unique(df$animal))
+
+```
+
+```{r}
+unique_images <- unique(df$Image)
+
+# Create an empty data frame to store results
+df_counts_roi <- data.frame(Image = character(),
+                            animal = character(),
+                            genotype = character(),
+                            rorb = integer(),
+                            cux1 = integer(),
+                            ctip2 = integer(),
+                            stringsAsFactors = FALSE)
+
+for (img in unique_images) {
+
+  temp <- df[df$Image == img, ]
+
+  # ---- Define bounds (using Y values) ----
+  # L23
+  L23_vals <- temp$Centroid.Y[temp$Classification == "Ctip2-: Cux1+: RORB-"]
+  L23_lower <- quantile(L23_vals, 0, na.rm = TRUE)
+  L23_upper <- quantile(L23_vals, 0.75, na.rm = TRUE)
+  
+  # L4
+  L4_vals <- temp$Centroid.Y[temp$Classification %in% c(
+    "Ctip2-: Cux1-: RORB+",
+    "Ctip2-: Cux1+: RORB+"
+  )]
+  L4_lower <- quantile(L4_vals, 0.05, na.rm = TRUE)
+  L4_upper <- quantile(L4_vals, 0.95, na.rm = TRUE)
+  
+  # L56
+  L56_vals <- temp$Centroid.Y[temp$Classification %in% c(
+    "Ctip2+: Cux1-: RORB-",
+    "Ctip2+: Cux1+: RORB-"
+  )]
+  L56_lower <- quantile(L56_vals, 0.1, na.rm = TRUE)
+  L56_upper <- quantile(L56_vals, 1.0, na.rm = TRUE)
+  
+  # ---- Compute ROI areas ----
+  x_dist <- 500 / 1.76
+  
+  L23_area <- ((L23_upper - L23_lower) / 1.76) * x_dist /100000
+  L4_area  <- ((L4_upper - L4_lower) / 1.76) * x_dist /100000
+  L56_area <- ((L56_upper - L56_lower) / 1.76) * x_dist /100000
+
+  # ---- Count cells using filtering ----
+
+  cux1_total <- sum(
+    temp$Centroid.Y < L23_upper &
+    temp$Centroid.Y > L23_lower &
+    temp$Classification == "Ctip2-: Cux1+: RORB-"
+  )
+  L23_density = cux1_total / L23_area
+
+  rorb_total <- sum(
+    temp$Centroid.Y < L4_upper &
+    temp$Centroid.Y > L4_lower &
+    temp$Classification %in% c("Ctip2-: Cux1-: RORB+", "Ctip2-: Cux1+: RORB+")
+  )
+  L4_density = rorb_total / L4_area
+
+  ctip2_total <- sum(
+    temp$Centroid.Y < L56_upper &
+    temp$Centroid.Y > L56_lower &
+    temp$Classification %in% c("Ctip2+: Cux1-: RORB-", "Ctip2+: Cux1+: RORB-")
+  )
+  L56_density = ctip2_total / L56_area
+
+  # ---- Store results ----
+  df_counts_roi <- rbind(df_counts_roi,
+    data.frame(
+      Image = img,
+      animal = unique(temp$animal),
+      genotype = unique(temp$genotype),
+      rorb_total = rorb_total,
+      cux1_total = cux1_total,
+      ctip2_total = ctip2_total,
+      L4_area = L4_area,
+      L23_area = L23_area,
+      L56_area = L56_area,
+      L4_lower = L4_lower,
+      L4_upper = L4_upper,
+      L23_lower = L23_lower,
+      L23_upper = L23_upper,
+      L56_lower = L56_lower,
+      L56_upper = L56_upper,
+      L4_density = L4_density,
+      L23_density = L23_density,
+      L56_density = L56_density
+    )
+  )
+}
+
+write.csv(df_counts_roi, "./data_qupath/neuronal_layers_set2_density_rois.csv", row.names = FALSE)
+```
+
+
+```{r}
+# Assume df has columns: Image, Class
+# First, get unique image IDs
+unique_images <- unique(df$Image)
+
+# Create an empty data frame to store results (RorB+ cells in this case but could be Cux1+ or Ctip2+)
+df_counts <- data.frame(Image = character(),
+                     rorb = integer(),
+                     cux1 = integer(),
+                     ctip2 = integer(),
+                     stringsAsFactors = FALSE)
+
+# Loop through each image
+for (img in unique_images) {
+  # calculate total cell counts
+    temp_totals <- df[df$Image == img, ]
+    rorb_total <- sum(temp_totals$Classification %in% c("Ctip2-: Cux1-: RORB+", "Ctip2-: Cux1+: RORB+"))
+    cux1_total <- sum(temp_totals$Classification == "Ctip2-: Cux1+: RORB-")
+    ctip2_total <- sum(temp_totals$Classification %in% c("Ctip2+: Cux1-: RORB-", "Ctip2+: Cux1+: RORB-"))
+  
+  # Loop through each bin
+  for (b in c(1:10)) {
+    # Subset the data for the current image
+    temp <- df[df$Image == img & df$bin == b, ]
+    
+    # Count "RorB" in the 'class' column. Divide by bin area in mm^2 (pixel height/aspect ratio * pixel width/aspect ratio)
+    # For other markers substitute other classes for "Ctip2-: Cux1-: RORB+"
+    rorb_count <- 100 * sum(temp$Classification %in% c("Ctip2-: Cux1-: RORB+", "Ctip2-: Cux1+: RORB+")) /rorb_total
+    cux1_count <- 100 * sum(temp$Classification == "Ctip2-: Cux1+: RORB-")/cux1_total
+    ctip2_count <- 100 * sum(temp$Classification %in% c("Ctip2+: Cux1-: RORB-", "Ctip2+: Cux1+: RORB-")) /ctip2_total
+    
+    # Append the results to the df_counts data frame
+    df_counts <- rbind(df_counts, data.frame(Image = img, bin = b, animal = unique(df[df$Image == img,]$animal), genotype = unique(df[df$Image == img,]$genotype), rorb = rorb_count, cux1 = cux1_count, ctip2 = ctip2_count))
+  }
+  df_counts <- unique(df_counts)
+}
+
+# View result
+print(df_counts)
+
+# save binned count data as a csv in case you want to feed it into another analysis pipeline or graphpad prism
+write.csv(df_counts, "./data_qupath/neuronal_layers_set2_counts_proportional.csv", row.names = FALSE)
+```
+
+```{r}
+# animal averages (counts per bin)
+df_counts_avg <- df_counts %>%
+  group_by(genotype, animal, bin) %>%
+  summarise(rorb = mean(rorb),
+            cux1 = mean(cux1), 
+            ctip2 = mean(ctip2),
+            .groups = "drop")
+
+print(df_counts_avg)
+
+# save binned animal means count data as a csv in case you want to feed it into another analysis pipeline or graphpad prism
+write.csv(df_counts_avg, "./data_qupath/neuronal_layers_set2_counts_proportional_means.csv", row.names = FALSE)
+```
+
+```{r}
+library(plotrix)
+#line plot for ROR-B counts
+df_counts_avg_summary <- df_counts_avg %>%
+  group_by(bin, genotype) %>%
+  summarise(
+    mean_rorb = mean(rorb),
+    se_rorb = std.error(rorb),
+    .groups = "drop"
+  )
+
+#reorder so WT is listed first in legend
+df_counts_avg_summary$genotype <- factor(df_counts_avg_summary$genotype, levels = c("WT", "KO"))
+
+# Create ggplot with lines and shaded error regions
+RORB_binned_density_plot <- # Create the plot
+ggplot(df_counts_avg_summary, aes(x = bin, y = mean_rorb, color = genotype, group = genotype)) +
+  geom_line(size = 1) +  # Line plot for mean Cell.Counts
+  geom_point(size = 3, alpha = 0.5) +
+  geom_ribbon(aes(ymin = mean_rorb - se_rorb, ymax = mean_rorb + se_rorb, fill = genotype), alpha = 0.2, color = NA) +  # Error ribbon for standard error
+  labs(
+    x = "Distance from Pia (% total cortical thickness)",
+    y = expression("Proportion within bin (%)"),
+    color = "genotype",
+    fill = "genotype"
+  ) +
+  theme_minimal()  +
+  scale_colour_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_fill_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_x_continuous(breaks = seq(min(df_counts_avg_summary$bin),
+                                max(df_counts_avg_summary$bin),
+                                by = 1)) +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  )
+
+
+png(filename = "p21_Ctnnd2_lineplot_rorb_counts_proportional_binned.png", width = 1200, height = 850, res = 300)
+  RORB_binned_density_plot
+  dev.off()
+RORB_binned_density_plot
+```
+
+```{r}
+library(car)
+df_counts_avg$bin <- as.factor(df_counts_avg$bin)
+model_rorb = lm(rorb ~ bin + genotype + bin:genotype,
+           data = df_counts_avg)
+summary(model_rorb)
+
+Anova(model_rorb, type = "II")
+
+```
+```{r}
+library(multcompView)
+library(lsmeans)
+library(multcomp)
+
+leastsquare <- lsmeans(model_rorb, pairwise ~ genotype | bin, adjust = "tukey")
+summary(leastsquare$contrasts)
+```
+
+
+```{r}
+library(plotrix)
+#line plot for Cux1 counts
+df_counts_avg_summary <- df_counts_avg %>%
+  group_by(bin, genotype) %>%
+  summarise(
+    mean_cux1 = mean(cux1),
+    se_cux1 = std.error(cux1),
+    .groups = "drop"
+  )
+
+#reorder so WT is listed first in legend
+df_counts_avg_summary$genotype <- factor(df_counts_avg_summary$genotype, levels = c("WT", "KO"))
+
+# Create ggplot with lines and shaded error regions
+cux1_binned_density_plot <- # Create the plot
+ggplot(df_counts_avg_summary, aes(x = bin, y = mean_cux1, color = genotype, group = genotype)) +
+  geom_line(size = 1) +  # Line plot for mean Cell.Counts
+  geom_point(size = 3, alpha = 0.5) +
+  geom_ribbon(aes(ymin = mean_cux1 - se_cux1, ymax = mean_cux1 + se_cux1, fill = genotype), alpha = 0.2, color = NA) +  # Error ribbon for standard error
+  labs(
+    x = "Distance from Pia (% total cortical thickness)",
+    y = expression("Proportion within bin (%)"),
+    color = "genotype",
+    fill = "genotype"
+  ) +
+  theme_minimal()  +
+  scale_colour_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_fill_manual(values = c("dodgerblue", "firebrick1")) +
+  theme(legend.position = "bottom")  # Optional: Adjust legend position
+
+
+png(filename = "p21_Ctnnd2_lineplot_cux1_counts_proportional_binned.png", width = 1200, height = 850, res = 300)
+  cux1_binned_density_plot
+  dev.off()
+cux1_binned_density_plot
+```
+
+```{r}
+library(car)
+df_counts_avg$bin <- as.factor(df_counts_avg$bin)
+model_cux1 = lm(cux1 ~ bin + genotype + bin:genotype,
+           data = df_counts_avg)
+summary(model_cux1)
+
+Anova(model_cux1, type = "II")
+
+```
+
+```{r}
+library(multcompView)
+library(lsmeans)
+library(multcomp)
+
+leastsquare <- lsmeans(model_cux1, pairwise ~ genotype | bin, adjust = "tukey")
+summary(leastsquare$contrasts)
+```
+
+
+```{r}
+library(plotrix)
+#line plot for Ctip2 counts
+df_counts_avg_summary <- df_counts_avg %>%
+  group_by(bin, genotype) %>%
+  summarise(
+    mean_ctip2 = mean(ctip2),
+    se_ctip2 = std.error(ctip2),
+    .groups = "drop"
+  )
+
+#reorder so WT is listed first in legend
+df_counts_avg_summary$genotype <- factor(df_counts_avg_summary$genotype, levels = c("WT", "KO"))
+
+# Create ggplot with lines and shaded error regions
+ctip2_binned_density_plot <- # Create the plot
+ggplot(df_counts_avg_summary, aes(x = bin, y = mean_ctip2, color = genotype, group = genotype)) +
+  geom_line(size = 1) +  # Line plot for mean Cell.Counts
+  geom_point(size = 3, alpha = 0.5) +
+  geom_ribbon(aes(ymin = mean_ctip2 - se_ctip2, ymax = mean_ctip2 + se_ctip2, fill = genotype), alpha = 0.2, color = NA) +  # Error ribbon for standard error
+  labs(
+    x = "Distance from Pia (% total cortical thickness)",
+    y = expression("Proportion within bin (%)"),
+    color = "genotype",
+    fill = "genotype"
+  ) +
+  theme_minimal()  +
+  scale_colour_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_fill_manual(values = c("dodgerblue", "firebrick1")) +
+  theme(legend.position = "bottom")  # Optional: Adjust legend position
+
+
+png(filename = "p21_Ctnnd2_lineplot_ctip2_counts_proportional_binned.png", width = 1200, height = 850, res = 300)
+  ctip2_binned_density_plot
+  dev.off()
+ctip2_binned_density_plot
+```
+
+```{r}
+library(car)
+df_counts_avg$bin <- as.factor(df_counts_avg$bin)
+model_ctip2 = lm(ctip2 ~ bin + genotype + bin:genotype,
+           data = df_counts_avg)
+summary(model_ctip2)
+
+Anova(model_ctip2, type = "II")
+
+```
+```{r}
+library(multcompView)
+library(lsmeans)
+library(multcomp)
+
+leastsquare <- lsmeans(model_ctip2, pairwise ~ genotype | bin, adjust = "tukey")
+summary(leastsquare$contrasts)
+```

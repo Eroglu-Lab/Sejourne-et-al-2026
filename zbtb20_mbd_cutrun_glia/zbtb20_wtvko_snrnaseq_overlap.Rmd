@@ -1,0 +1,211 @@
+---
+title: "zbtb20_wtvko_snrnaseq_overlap"
+author: "G Sejourne"
+date: "2026-02-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+#read in P28 CUT&RUN data
+union_peaks <- read.table("union_promoters_TSS.bed")
+
+#read in P28 snRNAseq data
+wilcox_neun_neg <- read.csv('./data/neun_neg_Wilcoxon_results_260120.csv')
+
+wt.gene.list <- read.csv('wt.gene.list.csv')
+wt.gene.list <- wt.gene.list[,2]
+ko.gene.list <- read.csv('ko.gene.list.csv')
+ko.gene.list <- ko.gene.list[,2]
+intersect.gene.list <- read.csv('intersect.gene.list.csv')
+intersect.gene.list <- intersect.gene.list[,2]
+```
+
+```{r}
+# combine to single dataframe
+union_peaks <- union_peaks$V4
+
+rownames(wilcox_neun_neg) <- wilcox_neun_neg$KO_n
+wilcox_neun_neg <- subset(wilcox_neun_neg, select = c(KO_n, KO_l, KO_p) )
+colnames(wilcox_neun_neg) = c('gene', 'logFC_rna', 'pval_rna')
+
+```
+
+
+```{r, echo=FALSE}
+res_combined <- wilcox_neun_neg %>%
+  mutate(
+    deg     = pval_rna < 0.05 & (abs(logFC_rna) > 0.3219),
+    
+    zbtb20 = if_else((gene %in% union_peaks), TRUE, FALSE),
+
+    direction_deg = case_when(
+      pval_rna < 0.05 & logFC_rna > 0.3219 ~ "Up",
+      pval_rna < 0.05 & logFC_rna < -0.3219 ~ "Down" 
+    ),
+    peakset = case_when(
+      gene %in% wt.gene.list ~ 'wt_unique',
+      gene %in% ko.gene.list ~ 'ko_unique',
+      gene %in% intersect.gene.list ~ 'intersect'
+    ),
+    cpg = gene %in% union_cpg$gene_name
+  )
+print(res_combined)
+write.csv(res_combined, './data/cutrun_rnaseq_degs.csv')
+```
+
+```{r}
+peakset_summary <- res_combined %>%
+  filter(!is.na(peakset)) %>% 
+  group_by(peakset) %>%
+  summarise(
+    total = n(),
+    deg = sum(deg, na.rm = TRUE),
+    unchanged = total - deg,
+    up = sum(direction_deg == "Up", na.rm = TRUE),
+    down = sum(direction_deg == "Down", na.rm = TRUE),
+    percent_deg = 100 * deg / total,
+    percent_up = 100 * up / total,
+    percent_down = 100 * down / total,
+    .groups = "drop"
+  )
+
+bound_summary <- res_combined %>%
+  filter(zbtb20 == TRUE) %>% 
+  summarise(
+    total = n(),
+    deg = sum(deg, na.rm = TRUE),
+    unchanged = total - deg,
+    up = sum(direction_deg == "Up", na.rm = TRUE),
+    down = sum(direction_deg == "Down", na.rm = TRUE),
+    percent_deg = 100 * deg / total,
+    percent_up = 100 * up / total,
+    percent_down = 100 * down / total,
+    .groups = "drop",
+    peakset = "bound"
+  )
+
+overall_summary <- res_combined %>%
+  summarise(
+    total = n(),
+    deg = sum(deg, na.rm = TRUE),
+    unchanged = total - deg,
+    up = sum(direction_deg == "Up", na.rm = TRUE),
+    down = sum(direction_deg == "Down", na.rm = TRUE),
+    percent_deg = 100 * deg / total,
+    percent_up = 100 * up / total,
+    percent_down = 100 * down / total,
+    peakset = "overall"
+  )
+
+deg_summary <- bind_rows(overall_summary, bound_summary, peakset_summary)
+deg_summary <- deg_summary %>% rename(group = peakset)
+print(deg_summary)
+
+write.csv(deg_summary, './data/prop_table_deg_by_peakset.csv')
+```
+
+```{r}
+library(dplyr)
+cpg_summary <- res_combined  %>%
+  filter(zbtb20 == TRUE) %>% 
+  group_by(cpg) %>%
+  summarise(
+    total = n(),
+    deg = sum(deg, na.rm = TRUE),
+    unchanged = total - deg,
+    up = sum(direction_deg == "Up", na.rm = TRUE),
+    down = sum(direction_deg == "Down", na.rm = TRUE),
+    percent_deg = 100 * deg / total,
+    percent_up = 100 * up / total,
+    percent_down = 100 * down / total,
+    group = if_else(dplyr::first(cpg), "cpg", "non_cpg"),
+    .groups = "drop"
+  )
+
+bound_summary <- res_combined %>%
+  filter(zbtb20 == TRUE) %>% 
+  summarise(
+    total = n(),
+    deg = sum(deg, na.rm = TRUE),
+    unchanged = total - deg,
+    up = sum(direction_deg == "Up", na.rm = TRUE),
+    down = sum(direction_deg == "Down", na.rm = TRUE),
+    percent_deg = 100 * deg / total,
+    percent_up = 100 * up / total,
+    percent_down = 100 * down / total,
+    .groups = "drop",
+    group = "bound"
+  )
+
+
+overall_summary <- res_combined %>%
+  summarise(
+    total = n(),
+    deg = sum(deg, na.rm = TRUE),
+    unchanged = total - deg,
+    up = sum(direction_deg == "Up", na.rm = TRUE),
+    down = sum(direction_deg == "Down", na.rm = TRUE),
+    percent_deg = 100 * deg / total,
+    percent_up = 100 * up / total,
+    percent_down = 100 * down / total,
+    group = "overall",
+  )
+
+deg_summary <- bind_rows(overall_summary, bound_summary, cpg_summary)
+deg_summary<- select(deg_summary, -c("cpg"))
+
+print(deg_summary)
+
+write.csv(deg_summary, './data/prop_table_deg_by_cpg.csv')
+```
+
+```{r}
+cpg_summary <- res_combined  %>%
+  filter(zbtb20 == TRUE) %>% 
+  group_by(cpg) %>%
+  summarise(
+    total = n(),
+    wt = sum(peakset == "wt_unique", na.rm = TRUE),
+    ko = sum(peakset == "ko_unique", na.rm = TRUE),
+    intersect = sum(peakset == "intersect", na.rm = TRUE),
+    pct_wt = 100 * wt / total,
+    pct_ko = 100 * ko / total,
+    pct_intersect = 100 * intersect / total,
+    group = if_else(dplyr::first(cpg), "cpg", "non_cpg"),
+    .groups = "drop"
+  )
+
+bound_summary <- res_combined %>%
+  filter(zbtb20 == TRUE) %>% 
+  summarise(
+   total = n(),
+    wt = sum(peakset == "wt_unique", na.rm = TRUE),
+    ko = sum(peakset == "ko_unique", na.rm = TRUE),
+    intersect = sum(peakset == "intersect", na.rm = TRUE),
+    pct_wt = 100 * wt / total,
+    pct_ko = 100 * ko / total,
+    pct_intersect = 100 * intersect / total,
+    .groups = "drop",
+    group = "bound"
+  )
+
+
+deg_summary <- bind_rows(bound_summary, cpg_summary)
+deg_summary<- select(deg_summary, -c("cpg"))
+
+print(deg_summary)
+
+write.csv(deg_summary, './data/prop_table_cpg_by_peakset.csv')
+```
+

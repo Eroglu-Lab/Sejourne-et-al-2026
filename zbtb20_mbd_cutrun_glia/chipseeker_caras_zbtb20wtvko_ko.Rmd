@@ -1,0 +1,162 @@
+---
+title: "chipseeker_caras_zbtb20_wtvko_ko"
+author: "G Sejourne"
+date: "2026-01-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# Install ChIPseeker and its dependencies if you don't have them
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("ChIPseeker")
+BiocManager::install("TxDb.Mmusculus.UCSC.mm39.knownGene") # or another genome
+```
+
+
+```{r}
+# Load the necessary libraries
+library(ChIPseeker)
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+
+# Load the annotation database
+txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
+
+# Run the annotation function.
+# This will associate each peak with the nearest gene and its genomic location (e.g., promoter, intron).
+annotated.peaks <- annotatePeak(
+    './data/zbtb20_ko_all_peaks_calculated.narrowPeak', 
+    tssRegion = c(-1500, 1500), 
+    TxDb = txdb, 
+    annoDb = "org.Mm.eg.db",
+    verbose = FALSE
+)
+
+```
+
+```{r}
+# Convert the annotated peaks to a data frame
+annotated.peaks.df <- as.data.frame(annotated.peaks)
+
+# rename chipseeker annotations
+names(annotated.peaks.df)[names(annotated.peaks.df) == "annotation"] <- "chipseeker_annot"
+
+caras_annotation <- read.csv('./data/zbtb20_ko_all_peaks_calculated.csv')
+
+chipseeker_col <- annotated.peaks.df[, c("V4", "chipseeker_annot", "SYMBOL")]
+
+# Merge only that column into caras_annotation
+merged_annotations <- merge(
+  caras_annotation,
+  chipseeker_col,
+  by.x = "Peak.ID",
+  by.y = "V4",
+  all.x = TRUE
+)
+
+# View the results, which now include gene symbols
+head(merged_annotations)
+
+# Get a list of unique genes associated with differentially bound sites
+gene.list <- unique(merged_annotations$SYMBOL)
+
+# View the gene list
+head(gene.list)
+
+
+```
+
+```{r}
+library(tidyr)
+# filter peaks
+merged_annotations_filtered <- merged_annotations[merged_annotations$Peak.Caller.Overlaps>=5,]
+
+# Split the 'chipseeker_annot' column by comma into 'annot_class', 'details'
+merged_annotations_sep <- merged_annotations_filtered %>%
+  separate(col = chipseeker_annot, into = c("annot_class", "details"), sep = " \\(")
+
+
+# Write the list of genes to a file
+write.csv(merged_annotations_sep, file="./data/caras_chipseeker_annotations_zbtb20_ko.csv", row.names=FALSE)
+```
+
+
+```{r}
+# Get frequency table
+freq_table <- table(merged_annotations_sep$annot_class)
+print(freq_table)
+write.csv(freq_table, file = "zbtb20wtvko_ko_genomic_features.csv")
+
+# Get proportion table and multiply by 100 for percentages
+percent_table <- prop.table(freq_table) * 100
+print(percent_table)
+```
+
+```{r}
+# install.packages("ggplot2")
+library(ggplot2)
+library(dplyr)
+#install.packages("geomtextpath")
+library(geomtextpath)
+
+# Convert frequency table to dataframe
+zb_annot_table <- as.data.frame(freq_table)
+colnames(zb_annot_table) <- c("Annot", "Frequency")
+print(zb_annot_table)
+
+# Calculate percentages
+zb_annot_table <- zb_annot_table %>% 
+  mutate(pct = paste(round(100 * Frequency / sum(Frequency), digits = 1), "%"))
+
+# define legend labels
+#legend_labels <- paste0(zb_annot_table$Annot, " (", zb_annot_table$pct, ")")
+#names(legend_labels) <- zb_annot_table$Annot
+
+my_colors = c(Promoter = "orange", Intron = "lightblue", 'Distal Intergenic' = "darkblue", Exon = "plum", "3' UTR" = "greenyellow", "5' UTR"  = "slateblue", Downstream = "mediumorchid")
+
+pie <- ggplot(zb_annot_table, aes(x="", y=Frequency, fill=Annot)) +
+  geom_bar(stat="identity", linewidth=0.5, color="black") +
+  coord_polar("y", start=0) +
+  
+  theme_void() + # remove background, grid, numeric labels
+
+  #geom_textpath(aes(label = Annot, x = 1.2), color = "black", fontface = "bold", size = 6, position = position_stack(vjust = 0.5), hjust = 1) +
+  scale_fill_manual(values = my_colors,
+                    labels = zb_annot_table$Annot,
+                    name = "Annotation") +
+  ggtitle("Zbtb20 KO annotations") +
+  theme(
+      legend.title = element_text(size = 24), # Changes legend title size
+      legend.text = element_text(size = 20),
+      plot.title = element_text(hjust = 0.5, face = "bold")
+      #legend.position = "bottom"
+  )
+
+  ggsave(
+    filename = "zbtb20_annot_pie_KO.png",  # or .pdf, .tiff, etc.
+    plot = pie,
+    #width = 12,    # width in inches
+    #height = 12,   # height in inches
+    #dpi = 300     # resolution (good for publication)
+  )
+pie
+```
+
+
+```{r}
+coords_promoters <- unique(merged_annotations_sep[merged_annotations_sep$annot_class == "Promoter",]$Peak.ID)
+writeLines(coords_promoters, "coords_ko_promoters.txt")
+
+coords_nonpromoters <- unique(merged_annotations_sep[!(merged_annotations_sep$annot_class == "Promoter"),]$Peak.ID)
+writeLines(coords_nonpromoters, "coords_ko_nonpromoters.txt")
+
+coords_filtered <-  unique(merged_annotations_sep$Peak.ID)
+writeLines(coords_filtered, "coords_ko_filtered.txt")
+length(coords_promoters)
+
+```

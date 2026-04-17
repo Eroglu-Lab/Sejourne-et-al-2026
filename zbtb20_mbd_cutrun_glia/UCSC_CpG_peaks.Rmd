@@ -1,0 +1,72 @@
+---
+title: "CpG_peaks"
+author: "G Sejourne"
+date: "2026-01-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+install.packages("xlsx")
+library(xlsx)
+library(GenomicRanges)
+
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+union_peaks <- read.table("union_promoters_TSS.bed")
+ucsc_cpg <- read.table("UCSC_CpG.bed")
+
+# GRanges object 1 (CpG)
+gr1 <- GRanges(
+  seqnames = ucsc_cpg$V1,
+  ranges = IRanges(start = ucsc_cpg$V2, end = ucsc_cpg$V3),
+  score = ucsc_cpg$V4
+)
+
+# GRanges object 2 (union peaks)
+gr2 <- GRanges(
+  seqnames = union_peaks$V1,
+  ranges = IRanges(start = union_peaks$V2, end = union_peaks$V3),
+  strand = union_peaks$V6,
+  gene_name = union_peaks$V4
+)
+
+# Find overlaps between gr1 (query) and gr2 (subject)
+gr2_subset <- subsetByOverlaps(gr2, gr1)
+print(gr2_subset)
+
+union_cpg <- as.data.frame(gr2_subset)
+head(union_cpg)
+```
+
+
+```{r cars}
+bed <- data.frame(
+    chrom  = union_cpg$seqnames,
+    start  = union_cpg$start,
+    end    = union_cpg$end,
+    name   = union_cpg$gene_name,
+    strand = union_cpg$strand)
+
+## ---- write BED ----
+write.table(
+  bed,
+  file = "ucsc_union_cpg.bed",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+
+```
+
+## Including Plots
+

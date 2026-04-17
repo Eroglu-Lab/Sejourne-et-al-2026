@@ -1,0 +1,230 @@
+---
+title: "zbtb20_snrnaseq_overlap"
+author: "G Sejourne"
+date: "2025-10-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggupset)
+library(dplyr)
+library(ggplot2)
+library(gplots)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+# read in differentially expressed and layer-enriched genes from p28 vis ctx snrnaseq
+wilcox_astro <- read.csv("./data/ASTRO_Wilcoxon_results_250106.csv")
+upper <- read.csv("./data/upper_genes_WT.csv")
+deep <- read.csv("./data/deep_genes_WT.csv")
+mid <- read.csv("./data/mid_genes_WT.csv")
+WM <- read.csv("./data/WM_genes_WT.csv")
+
+wilcox_astro_diff <- wilcox_astro[wilcox_astro$KO_p<=0.05 & abs(wilcox_astro$KO_l) >= log(1.25, 2),]$KO_n
+
+#chose a log2 fold change cut off of 1.8
+upper_enriched <- upper[upper$pvals_adj<=0.05 & (upper$logfoldchanges) >= log(1.8, 2),]$names
+deep_enriched <- deep[deep$pvals_adj<=0.05 & (deep$logfoldchanges) >= log(1.8, 2),]$names
+mid_enriched <- upper[mid$pvals_adj<=0.05 & (mid$logfoldchanges) >= log(1.8, 2),]$names
+WM_enriched <- WM[WM$pvals_adj<=0.05 & (WM$logfoldchanges) >= log(1.8, 2),]$names
+
+layer_enriched <- c(upper_enriched, deep_enriched, mid_enriched, WM_enriched)
+
+```
+
+
+```{r cars}
+# read in genes with zbtb20-bound promoters
+TSS_peaks <- read.table("zbtb20_astro_promoters_TSS.bed")
+
+zbtb20_targets <- TSS_peaks$V4
+zbtb20_targets_astro <- zbtb20_targets[zbtb20_targets %in% wilcox_astro$KO_n]
+
+# identify genes bound by zbtb20, differentially expressed, and layer-enriched (_layer) or not layer-enriched (_other)
+x <-list(wilcox_astro_diff, zbtb20_targets_astro, layer_enriched)
+names(x) <- c("KOvWT", "zbtb20", "layer")
+v.table <- gplots::venn(x)
+v.table
+
+de_bound_layer <- attr(v.table, "intersections")$`KOvWT:zbtb20:layer`
+de_bound_other <- attr(v.table, "intersections")$`KOvWT:zbtb20`
+bound_layer <- c(attr(v.table, "intersections")$`zbtb20:layer`)
+bound_other <- c(attr(v.table, "intersections")$`zbtb20`)
+
+# build frequency table of bound and unbound layer-enriched and non-layer-enriched DEGs
+bound_layer_deg <- data.frame(
+                        DEG = c("TRUE", "TRUE", "FALSE", "FALSE"),
+                        layer = c("TRUE", "FALSE", "TRUE", "FALSE"),
+                        count = c(length(de_bound_layer), length(de_bound_other), length(bound_layer), length(bound_other))) %>%
+  group_by(layer) %>%
+  mutate(pct = 100* count / sum(count)) %>%
+  ungroup()
+
+bound_layer_deg
+write.csv(bound_layer_deg, file = "layer_deg_contingency.csv")
+```
+
+
+```{r}
+# identify layer of enrichment for zbtb20-bound layer-enriched genes
+x <-list(zbtb20_targets, upper_enriched, mid_enriched, deep_enriched, WM_enriched)
+names(x) <- c("zbtb20", "UPPER", "MID", "DEEP", "WM")
+v.table <- gplots::venn(x)
+v.table
+
+upper_bound <- attr(v.table, "intersections")$`zbtb20:UPPER`
+mid_bound <- attr(v.table, "intersections")$`zbtb20:MID`
+upper_mid_bound <- attr(v.table, "intersections")$`zbtb20:UPPER:MID`
+deep_bound <- attr(v.table, "intersections")$`zbtb20:DEEP`
+WM_bound <- attr(v.table, "intersections")$`zbtb20:WM`
+deep_WM_bound <- attr(v.table, "intersections")$`zbtb20:DEEP:WM`
+other_bound <- attr(v.table,"intersections")$zbtb20
+
+# make frequency table for layer of enrichment of zbtb20 targets
+bound_layers <- data.frame(
+                        layer = c("upper", "mid", "upper_mid", "deep", "WM", "deep_WM", "other"),
+                        count = c(length(upper_bound), length(mid_bound), length(upper_mid_bound), length(deep_bound), length(WM_bound), length(deep_WM_bound), length(other_bound)))
+
+bound_layers
+write.csv(bound_layers, file = "bound_layers.csv")
+
+# make table of zbtb20 targets with layer enrichment
+df_upper_bound <- data.frame(gene = upper_bound, layer = "upper")
+df_mid_bound <- data.frame(gene = mid_bound, layer = "mid")
+df_upper_mid_bound <- data.frame(gene = upper_mid_bound, layer = "upper_mid")
+df_deep_bound <- data.frame(gene = deep_bound, layer = "deep")
+df_WM_bound <- data.frame(gene = WM_bound, layer = "WM")
+df_deep_WM_bound <- data.frame(gene = deep_WM_bound, layer = "deep_WM")
+
+bound_layer_genes <- rbind(df_upper_bound, df_mid_bound, df_upper_mid_bound, df_deep_bound, df_WM_bound, df_deep_WM_bound)
+
+write.csv(bound_layer_genes, file = "zbtb20_bound_layer_genes.csv", row.names = FALSE)
+```
+
+
+```{r}
+# identify layer of enrichment for zbtb20-bound DEGs
+# read in DEGs from snrnaseq dataset
+x <-list(wilcox_astro_diff, zbtb20_targets)
+names(x) <- c("KOvWT", "zbtb20")
+v.table <- gplots::venn(x)
+v.table
+
+# make frequency table for layer of enrichment of zbtb20 targets
+de_zbtb20_targets <- attr(v.table, "intersections")$`KOvWT:zbtb20`
+
+x <-list(de_zbtb20_targets, upper_enriched, mid_enriched, deep_enriched, WM_enriched)
+names(x) <- c("de_zbtb20", "UPPER", "MID", "DEEP", "WM")
+v.table <- gplots::venn(x)
+v.table
+
+# make table of zbtb20 targets that are DEGs with layer enrichment
+de_upper_bound <- attr(v.table, "intersections")$`de_zbtb20:UPPER`
+de_mid_bound <- attr(v.table, "intersections")$`de_zbtb20:MID`
+de_upper_mid_bound <- attr(v.table, "intersections")$`de_zbtb20:UPPER:MID`
+de_deep_bound <- attr(v.table, "intersections")$`de_zbtb20:DEEP`
+de_WM_bound <- attr(v.table, "intersections")$`de_zbtb20:WM`
+de_deep_WM_bound <- attr(v.table, "intersections")$`de_zbtb20:DEEP:WM`
+de_other_bound <- attr(v.table,"intersections")$de_zbtb20
+
+de_bound_layers <- data.frame(
+                        layer = c("upper", "mid", "upper_mid", "deep", "WM", "deep_WM", "other"),
+                        count = c(length(de_upper_bound), length(de_mid_bound), length(de_upper_mid_bound), length(de_deep_bound), length(de_WM_bound), length(de_deep_WM_bound), length(de_other_bound)))
+
+de_bound_layers
+
+write.csv(de_bound_layers, file = "diff_exp_bound_layers.csv")
+```
+
+```{r}
+#add percentage column
+de_bound_layers <- de_bound_layers[!(de_bound_layers$layer == "other"),]  %>% 
+  mutate(Frequency = paste(round(100 * count / sum(count), digits = 1)))
+de_bound_layers$DEG = "DEG"
+bound_layers <- bound_layers[!(bound_layers$layer == "other"),]  %>% 
+  mutate(Frequency = paste(round(100 * count / sum(count), digits = 1)))
+bound_layers$DEG = "ALL"
+
+layer_table <- rbind(bound_layers, de_bound_layers) 
+layer_table$Frequency <- as.numeric(layer_table$Frequency)
+
+```
+
+
+```{r}
+bound_layers$Frequency <- as.numeric(bound_layers$Frequency)
+# change order of layers
+bound_layers$layer <- factor(bound_layers$layer, levels = c("upper", "upper_mid", "mid", "deep", "deep_WM", "WM"))
+
+# Basic piechart
+my_colors = c(upper = "magenta", upper_mid = "plum1", mid = "green2",deep = "yellow", WM = "cyan", deep_WM = "olivedrab1")
+
+p <- ggplot(bound_layers, aes(x="", y=Frequency, fill=layer)) +
+  geom_bar(stat="identity", linewidth=0.5, color="black") +
+  coord_polar("y", start=0) +
+  
+  theme_void() + # remove background, grid, numeric labels
+
+  #geom_textpath(aes(label = layer, x = 1.2), color = "black", fontface = "bold", size = 6, position = position_stack(vjust = 0.5), hjust = 1) +
+  scale_fill_manual(values = my_colors,
+                    labels = levels(bound_layers$layer),
+                    name = "Layer") +
+  ggtitle("All layer genes") +
+  theme(
+      legend.title = element_text(size = 24), # Changes legend title size
+      legend.text = element_text(size = 20),
+      plot.title = element_text(hjust = 0.5, face = "bold")
+      #legend.position = "bottom"
+  ) 
+
+  ggsave(
+    filename = "bound_layer_pie.png",  # or .pdf, .tiff, etc.
+    plot = p,
+    width = 12,    # width in inches
+    height = 6,   # height in inches
+    #dpi = 300     # resolution (good for publication)
+  )
+p
+```
+```{r}
+de_bound_layers$Frequency <- as.numeric(de_bound_layers$Frequency)
+# change order of layers
+de_bound_layers$layer <- factor(de_bound_layers$layer, levels = c("upper", "upper_mid", "mid", "deep", "deep_WM", "WM"))
+
+# Basic piechart
+my_colors = c(upper = "magenta", upper_mid = "plum1", mid = "green2",deep = "yellow", WM = "cyan", deep_WM = "olivedrab1")
+
+p <- ggplot(de_bound_layers, aes(x="", y=Frequency, fill=layer)) +
+  geom_bar(stat="identity", linewidth=0.5, color="black") +
+  coord_polar("y", start=0) +
+  
+  theme_void() + # remove background, grid, numeric labels
+
+  #geom_textpath(aes(label = layer, x = 1.2), color = "black", fontface = "bold", size = 6, position = position_stack(vjust = 0.5), hjust = 1) +
+  scale_fill_manual(values = my_colors,
+                    labels = levels(de_bound_layers$layer),
+                    name = "Layer") +
+  ggtitle("Ctnnd2-KO DEGs") +
+  theme(
+      legend.title = element_text(size = 24), # Changes legend title size
+      legend.text = element_text(size = 20),
+      plot.title = element_text(hjust = 0.5, face = "bold")
+      #legend.position = "bottom"
+  ) 
+
+  ggsave(
+    filename = "de_bound_layer_pie.png",  # or .pdf, .tiff, etc.
+    plot = p,
+    width = 12,    # width in inches
+    height = 6,   # height in inches
+    #dpi = 300     # resolution (good for publication)
+  )
+p
+```

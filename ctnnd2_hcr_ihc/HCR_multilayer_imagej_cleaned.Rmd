@@ -1,0 +1,357 @@
+---
+title: "HCR_multilayer_imagej"
+author: "G Sejourne"
+date: "2025-07-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggsci)
+library(readxl) 
+library(tidyverse)
+library(dplyr)
+```
+
+```{r}
+# Import data
+setwd(getwd())
+df_Mfge8_Id4_initial <- read.csv("./data/Id4_C3_merged_data.csv")
+df_Id4_initial <- read.csv("./data/Id4_C4_merged_data.csv")
+df_Mfge8_Tnc_initial <- read.csv("./data/Tnc_C3_merged_data.csv")
+df_Tnc_initial <- read.csv("./data/Tnc_C4_merged_data.csv")
+df_Mfge8_initial <- rbind(df_Mfge8_Id4_initial, df_Mfge8_Tnc_initial)
+
+decoder <- read.csv("./decoder_HCR_multilayer_set1.csv")
+```
+
+
+```{r}
+# Tidy Mfge8 data
+df_Mfge8_initial$Image <- substr(df_Mfge8_initial$source_file, 56, (nchar(df_Mfge8_initial$source_file)-28))
+
+df_Mfge8_initial <- df_Mfge8_initial %>%
+  mutate(
+    Animal_ID = sapply(strsplit(Image, "_"), function(x) x[2])
+  )
+
+df <- merge(df_Mfge8_initial, decoder, by = "Animal_ID")
+
+colnames(df)[2] <- 'Bin'
+
+write.csv(df, "./data/HCR_Mfge8_set1.csv", row.names = FALSE)
+
+print(df)
+```
+
+```{r}
+library(dplyr)
+
+# Step 1: "Bin 11" is actually the full image. Create a "MeanOverall" column which is the mean from full image.
+  mfge8_intensity_avg_overall <- df %>%
+  filter(Bin == 11) %>%
+  mutate(MeanOverall = Mean) %>%
+  dplyr::select(Genotype, Animal_ID, Image, MeanOverall)
+
+# Step 2: For Bins 1–10, join with total intensity and compute proportion (mean in bin compared to overall mean)
+  mfge8_proportion_binned <- df %>%
+  filter(Bin %in% 1:10) %>%
+  left_join(mfge8_intensity_avg_overall, by = c("Genotype", "Animal_ID", "Image")) %>%
+  mutate(mfge8_proportion = Mean / MeanOverall)
+
+# Optional: Preview result
+print(mfge8_proportion_binned)
+
+# Step 3: Average proportions per Animal per Bin
+  mfge8_proportion_avg_binned <- mfge8_proportion_binned %>%
+  group_by(Genotype, Animal_ID, Bin) %>%
+  summarise(mfge8_proportion = mean(mfge8_proportion, na.rm = TRUE), .groups = "drop")
+
+# Step 4: Write to CSV
+write.csv(mfge8_proportion_avg_binned, "./data/mfge8_set1_intensity_animal_means.csv", row.names = FALSE)
+
+
+```
+
+
+
+```{r}
+library(plotrix)
+#line plot for Mfge8
+mfge8_proportion_avg_summary <- mfge8_proportion_avg_binned %>%
+  group_by(Bin, Genotype) %>%
+  summarise(
+    mean_mfge8 = mean(mfge8_proportion),
+    se_mfge8 = std.error(mfge8_proportion),
+    .groups = "drop"
+  )
+
+#reorder so WT is listed first in legend
+mfge8_proportion_avg_summary$Genotype <- factor(mfge8_proportion_avg_summary$Genotype, levels = c("WT", "KO"))
+
+# Create ggplot with lines and shaded error regions
+mfge8_binned_intensity_plot <- # Create the plot
+ggplot(mfge8_proportion_avg_summary, aes(x = Bin, y = mean_mfge8, color = Genotype, group = Genotype)) +
+  geom_line(size = 1) +  # Line plot for mean Cell.Counts
+  geom_point(size = 3, alpha = 0.5) +
+  geom_ribbon(aes(ymin = mean_mfge8 - se_mfge8, ymax = mean_mfge8 + se_mfge8, fill = Genotype), alpha = 0.2, color = NA) +  # Error ribbon for standard deviation
+  labs(
+    #title = "Mean Mfge8 intensity by Genotype and Distance from Pia",
+    x = "Distance from Pia (% total cortical thickness)",
+    y = "Normalized signal per bin",
+    color = "genotype",
+    fill = "genotype"
+  ) +
+  theme_minimal()  +
+  scale_colour_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_fill_manual(values = c("dodgerblue", "firebrick1")) +
+  theme(legend.position = "bottom")  # Optional: Adjust legend position
+
+
+png(filename = "p30_Ctnnd2_lineplot_mfge8_intensity_binned.png", width = 1200, height = 850, res = 300)
+  mfge8_binned_intensity_plot
+  dev.off()
+mfge8_binned_intensity_plot
+```
+
+```{r}
+# 2-way ANOVA of Mfge8 in WT vs KO for bin and genotype
+library(car)
+mfge8_proportion_avg_binned$Bin <- as.factor(mfge8_proportion_avg_binned$Bin)
+model = lm(mfge8_proportion ~ Bin + Genotype + Bin:Genotype,
+           data = mfge8_proportion_avg_binned)
+summary(model)
+
+Anova(model, type = "II")
+
+```
+```{r}
+# Mfge8 posthoc testing
+
+library(multcompView)
+library(lsmeans)
+library(multcomp)
+
+leastsquare <- lsmeans(model, pairwise ~ Genotype | Bin, adjust = "tukey")
+summary(leastsquare$contrasts)
+
+
+```
+
+```{r}
+# Tidy Id4 data
+df_Id4_initial$Image <- substr(df_Id4_initial$source_file, 56, (nchar(df_Id4_initial$source_file)-28))
+
+df_Id4_initial <- df_Id4_initial %>%
+  mutate(
+    Animal_ID = sapply(strsplit(Image, "_"), function(x) x[2])
+  )
+
+df <- merge(df_Id4_initial, decoder, by = "Animal_ID")
+
+colnames(df)[2] <- 'Bin'
+
+write.csv(df, "./data/HCR_Id4_set1.csv", row.names = FALSE)
+
+print(df)
+
+```
+
+```{r}
+library(dplyr)
+
+# Step 1: "Bin 11" is actually the full image. Create a "MeanOverall" column which is the mean from full image.
+id4_intensity_avg_overall <- df %>%
+  filter(Bin == 11) %>%
+  mutate(MeanOverall = Mean) %>%
+  dplyr::select(Genotype, Animal_ID, Image, MeanOverall)
+
+# Step 2: For Bins 1–10, join with total intensity and compute proportion
+id4_proportion_binned <- df %>%
+  filter(Bin %in% 1:10) %>%
+  left_join(id4_intensity_avg_overall, by = c("Genotype", "Animal_ID", "Image")) %>%
+  mutate(id4_proportion = Mean / MeanOverall)
+
+# Optional: Preview result
+print(id4_proportion_binned)
+
+# Step 3: Average proportions per Animal per Bin
+id4_proportion_avg_binned <- id4_proportion_binned %>%
+  group_by(Genotype, Animal_ID, Bin) %>%
+  summarise(id4_proportion = mean(id4_proportion, na.rm = TRUE), .groups = "drop")
+
+# Step 4: Write to CSV
+write.csv(id4_proportion_avg_binned, "./data/id4_set1_intensity_animal_means.csv", row.names = FALSE)
+
+```
+
+
+
+```{r}
+library(plotrix)
+#line plot for id4
+id4_proportion_avg_summary <- id4_proportion_avg_binned %>%
+  group_by(Bin, Genotype) %>%
+  summarise(
+    mean_id4 = mean(id4_proportion),
+    se_id4 = std.error(id4_proportion),
+    .groups = "drop"
+  )
+
+#reorder so WT is listed first in legend
+id4_proportion_avg_summary$Genotype <- factor(id4_proportion_avg_summary$Genotype, levels = c("WT", "KO"))
+
+# Create ggplot with lines and shaded error regions
+id4_binned_intensity_plot <- # Create the plot
+ggplot(id4_proportion_avg_summary, aes(x = Bin, y = mean_id4, color = Genotype, group = Genotype)) +
+  geom_line(size = 1) +  # Line plot for mean Cell.Counts
+  geom_point(size = 3, alpha = 0.5) +
+  geom_ribbon(aes(ymin = mean_id4 - se_id4, ymax = mean_id4 + se_id4, fill = Genotype), alpha = 0.2, color = NA) +  # Error ribbon for standard deviation
+  labs(
+    #title = "Mean id4 intensity by Genotype and Distance from Pia",
+    x = "Distance from Pia (% total cortical thickness)",
+    y = "Normalized signal per bin",
+    color = "genotype",
+    fill = "genotype"
+  ) +
+  theme_minimal()  +
+  scale_colour_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_fill_manual(values = c("dodgerblue", "firebrick1")) +
+  theme(legend.position = "bottom")  # Optional: Adjust legend position
+
+
+png(filename = "p30_Ctnnd2_lineplot_id4_intensity_binned.png", width = 1200, height = 850, res = 300)
+  id4_binned_intensity_plot
+  dev.off()
+id4_binned_intensity_plot
+
+```
+
+```{r}
+# 2-way ANOVA of Id4 in WT vs KO for bin and genotype
+library(car)
+id4_proportion_avg_binned$Bin <- as.factor(id4_proportion_avg_binned$Bin)
+model = lm(id4_proportion ~ Bin + Genotype + Bin:Genotype,
+           data = id4_proportion_avg_binned)
+summary(model)
+
+Anova(model, type = "II")
+```
+```{r}
+# posthoc testing for Id4
+leastsquare <- lsmeans(model, pairwise ~ Genotype | Bin, adjust = "tukey")
+summary(leastsquare$contrasts)
+```
+
+```{r}
+# Tidy Tnc data
+df_Tnc_initial$Image <- substr(df_Tnc_initial$source_file, 56, (nchar(df_Tnc_initial$source_file)-28))
+
+df_Tnc_initial <- df_Tnc_initial %>%
+  mutate(
+    Animal_ID = sapply(strsplit(Image, "_"), function(x) x[2])
+  )
+
+df_Tnc_decoded <- merge(df_Tnc_initial, decoder, by = "Animal_ID")
+
+colnames(df_Tnc_decoded)[2] <- 'Bin'
+
+write.csv(df_Tnc_decoded, "./data/HCR_Tnc_set1.csv", row.names = FALSE)
+
+print(df_Tnc_decoded)
+
+```
+
+```{r}
+library(dplyr)
+
+# Step 1: "Bin 11" is actually the full image. Create a "MeanOverall" column which is the mean from full image.
+tnc_intensity_avg_overall <- df_Tnc_decoded %>%
+  filter(Bin == 11) %>%
+  mutate(MeanOverall = Mean) %>%
+  dplyr::select(Genotype, Animal_ID, Image, MeanOverall)
+
+# Step 2: For Bins 1–10, join with total intensity and compute proportion
+tnc_proportion_binned <- df_Tnc_decoded %>%
+  filter(Bin %in% 1:10) %>%
+  left_join(tnc_intensity_avg_overall, by = c("Genotype", "Animal_ID", "Image")) %>%
+  mutate(tnc_proportion = Mean / MeanOverall)
+
+# Optional: Preview result
+print(tnc_proportion_binned)
+
+# Step 3: Average proportions per Animal per Bin
+tnc_proportion_avg_binned <- tnc_proportion_binned %>%
+  group_by(Genotype, Animal_ID, Bin) %>%
+  summarise(tnc_proportion = mean(tnc_proportion, na.rm = TRUE), .groups = "drop")
+
+# Step 4: Write to CSV
+write.csv(tnc_proportion_avg_binned, "./data/tnc_set1_intensity_animal_means.csv", row.names = FALSE)
+
+
+```
+
+
+
+```{r}
+library(plotrix)
+#line plot for tnc
+tnc_proportion_avg_summary <- tnc_proportion_avg_binned %>%
+  group_by(Bin, Genotype) %>%
+  summarise(
+    mean_tnc = mean(tnc_proportion),
+    se_tnc = std.error(tnc_proportion),
+    .groups = "drop"
+  )
+
+#reorder so WT is listed first in legend
+tnc_proportion_avg_summary$Genotype <- factor(tnc_proportion_avg_summary$Genotype, levels = c("WT", "KO"))
+
+# Create ggplot with lines and shaded error regions
+tnc_binned_intensity_plot <- # Create the plot
+ggplot(tnc_proportion_avg_summary, aes(x = Bin, y = mean_tnc, color = Genotype, group = Genotype)) +
+  geom_line(size = 1) +  # Line plot for mean Cell.Counts
+  geom_point(size = 3, alpha = 0.5) +
+  geom_ribbon(aes(ymin = mean_tnc - se_tnc, ymax = mean_tnc + se_tnc, fill = Genotype), alpha = 0.2, color = NA) +  # Error ribbon for standard deviation
+  labs(
+    #title = "Mean tnc intensity by Genotype and Distance from Pia",
+    x = "Distance from Pia (% total cortical thickness)",
+    y = "Normalized signal per bin",
+    color = "genotype",
+    fill = "genotype"
+  ) +
+  theme_minimal()  +
+  scale_colour_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_fill_manual(values = c("dodgerblue", "firebrick1")) +
+  theme(legend.position = "bottom")  # Optional: Adjust legend position
+
+
+png(filename = "p30_Ctnnd2_lineplot_tnc_intensity_binned.png", width = 1200, height = 850, res = 300)
+  tnc_binned_intensity_plot
+  dev.off()
+tnc_binned_intensity_plot
+```
+
+```{r}
+# 2-way ANOVA of Id4 in WT vs KO for bin and genotype
+library(car)
+tnc_proportion_avg_binned$Bin <- as.factor(tnc_proportion_avg_binned$Bin)
+model = lm(tnc_proportion ~ Bin + Genotype + Bin:Genotype,
+           data = tnc_proportion_avg_binned)
+summary(model)
+
+Anova(model, type = "II")
+
+```
+
+```{r}
+# Tnc posthoc testing
+library(multcompView)
+library(lsmeans)
+
+leastsquare <- lsmeans(model, pairwise ~ Genotype | Bin, adjust = "tukey")
+summary(leastsquare$contrasts)
+```
+
+

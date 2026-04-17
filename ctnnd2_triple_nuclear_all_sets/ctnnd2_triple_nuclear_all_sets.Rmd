@@ -1,0 +1,273 @@
+---
+title: "triple_nuclear_all_sets"
+author: "G Sejourne"
+date: "2025-01-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#| label: packages and data:
+
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(stringr)
+library(car)
+library(FSA)
+library(ggpubr)
+library(ggbeeswarm)
+
+#packages for statistical analysis
+if(!require(lsmeans)){install.packages("lsmeans")}
+if(!require(multcompView)){install.packages("multcompView")}
+if(!require(dplyr)){install.packages("dplyr")}
+if(!require(rcompanion)){install.packages("rcompanion")}
+
+decoder <- read.csv("Data/Decoder_trinuc_all_sets.csv")
+```
+
+```{r}
+# DAPI data
+# Ensure the Distance column is numeric first
+DAPI_binned = read.csv("Data/DAPI_Counts_Normalized_Pixel_Based_Unblinded.csv")
+DAPI_binned_organized = read.csv("Data/DAPI_Counts_Normalized_Pixel_Based_Unblinded_Organized.csv")
+
+colnames(DAPI_binned_organized)[colnames(DAPI_binned_organized) == "Normalized.distance.from.pia...."] <- 'dist_norm'
+
+#NeuN data
+NeuN_binned = read.csv("Data/NeuN_Counts_Normalized_Pixel_Based_Unblinded.csv")
+NeuN_binned_organized = read.csv("Data/NeuN_Counts_Normalized_Pixel_Based_Unblinded_Organized.csv")
+
+colnames(NeuN_binned_organized)[colnames(NeuN_binned_organized) == "Normalized.distance.from.pia...."] <- 'dist_norm'
+
+#Olig2 data
+Olig2_binned = read.csv("Data/Olig2_Counts_Normalized_Pixel_Based_Unblinded.csv")
+Olig2_binned_organized = read.csv("Data/Olig2_Counts_Normalized_Pixel_Based_Unblinded_Organized.csv")
+
+colnames(Olig2_binned_organized)[colnames(Olig2_binned_organized) == "Normalized.distance.from.pia...."] <- 'dist_norm'
+
+#Sox9 data
+Sox9_binned = read.csv("Data/Sox9_Counts_Normalized_Pixel_Based_Unblinded.csv")
+Sox9_binned_organized = read.csv("Data/Sox9_Counts_Normalized_Pixel_Based_Unblinded_Organized.csv")
+
+colnames(Sox9_binned_organized)[colnames(Sox9_binned_organized) == "Normalized.distance.from.pia...."] <- 'dist_norm'
+
+```
+
+```{r}
+library(plotrix)
+#line plot for DAPI
+DAPI_binned_summary <- DAPI_binned_organized %>%
+  group_by(dist_norm, Genotype) %>%
+  summarise(
+    mean_cell_counts = mean(Cell.Counts/1.21, na.rm = TRUE),
+    se_cell_counts = std.error(Cell.Counts/1.21, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+#reorder so WT is listed first in legend
+DAPI_binned_summary$Genotype <- factor(DAPI_binned_summary$Genotype, levels = c("WT", "KO"))
+
+# Create ggplot with lines and shaded error regions
+DAPI_binned_density_plot <- # Create the plot
+ggplot(DAPI_binned_summary, aes(x = dist_norm, y = mean_cell_counts, color = Genotype, group = Genotype)) +
+  geom_line(size = 1) +  # Line plot for mean Cell.Counts
+  geom_point(size = 3, alpha = 0.5) +
+  geom_ribbon(aes(ymin = mean_cell_counts - se_cell_counts, ymax = mean_cell_counts + se_cell_counts, fill = Genotype), alpha = 0.2, color = NA) +  # Error ribbon for standard deviation
+  labs(
+    #title = "Mean DAPI Counts by Genotype and Distance from Pia",
+    x = "Distance from Pia (% total cortical thickness)",
+    y = bquote('DAPI+ nuclei / 100k '~um^2),
+    color = "Genotype",
+    fill = "Genotype"
+  ) +
+  theme_minimal()  +
+  scale_colour_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_fill_manual(values = c("dodgerblue", "firebrick1")) +
+  theme(legend.position = "bottom")  # Optional: Adjust legend position
+
+
+png(filename = "p21_Ctnnd2_lineplot_DAPI_binned.png", width = 1200, height = 850, res = 300)
+  DAPI_binned_density_plot
+  dev.off()
+DAPI_binned_density_plot
+```
+
+
+```{r}
+#| label: line plot for NeuN
+NeuN_binned_summary <- NeuN_binned_organized %>%
+  group_by(dist_norm, Genotype) %>%
+  summarise(
+    mean_cell_counts = mean(Cell.Counts/1.21, na.rm = TRUE),
+    se_cell_counts = std.error(Cell.Counts/1.21, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+#reorder so WT is listed first in legend
+NeuN_binned_summary$Genotype <- factor(NeuN_binned_summary$Genotype, levels = c("WT", "KO"))
+
+# Create ggplot with lines and shaded error regions
+NeuN_binned_density_plot <- # Create the plot
+ggplot(NeuN_binned_summary, aes(x = dist_norm, y = mean_cell_counts, color = Genotype, group = Genotype)) +
+  geom_line(size = 1) +  # Line plot for mean Cell.Counts
+  geom_point(size = 3, alpha = 0.5) +
+  geom_ribbon(aes(ymin = mean_cell_counts - se_cell_counts, ymax = mean_cell_counts + se_cell_counts, fill = Genotype), alpha = 0.2, color = NA) +  # Error ribbon for standard deviation
+  labs(
+    #title = "Mean NeuN+ nuclei by Genotype and Distance from Pia",
+    x = "Distance from Pia (% total cortical thickness)",
+    y = bquote('NeuN+ nuclei / 100k '~um^2),
+    color = "Genotype",
+    fill = "Genotype"
+  ) + 
+  theme_minimal()  +
+  scale_colour_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_fill_manual(values = c("dodgerblue", "firebrick1")) +
+  theme(legend.position = "bottom")  # Optional: Adjust legend position
+
+
+png(filename = "p21_Ctnnd2_lineplot_NeuN_binned.png", width = 1200, height = 850, res = 300)
+  NeuN_binned_density_plot
+  dev.off()
+NeuN_binned_density_plot
+```
+```{r}
+library(car)
+NeuN_binned_organized$dist_norm <- as.factor(NeuN_binned_organized$dist_norm)
+model_neun = lm(Cell.Counts ~ dist_norm + Genotype + dist_norm:Genotype,
+           data = NeuN_binned_organized)
+summary(model_neun)
+
+Anova(model_neun, type = "II")
+
+```
+
+```{r}
+library(multcompView)
+library(lsmeans)
+library(multcomp)
+
+leastsquare <- lsmeans(model_neun, pairwise ~ Genotype | dist_norm, adjust = "tukey")
+summary(leastsquare$contrasts)
+```
+
+```{r}
+Sox9_binned_summary <- Sox9_binned_organized %>%
+  group_by(dist_norm, Genotype) %>%
+  summarise(
+    mean_cell_counts = mean(Cell.Counts/1.21, na.rm = TRUE),
+    se_cell_counts = std.error(Cell.Counts/1.21, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+#reorder so WT is listed first in legend
+Sox9_binned_summary$Genotype <- factor(Sox9_binned_summary$Genotype, levels = c("WT", "KO"))
+
+# Create ggplot with lines and shaded error regions
+Sox9_binned_density_plot <- # Create the plot
+ggplot(Sox9_binned_summary, aes(x = dist_norm, y = mean_cell_counts, color = Genotype, group = Genotype)) +
+  geom_line(size = 1) +  # Line plot for mean Cell.Counts
+  geom_point(size = 3, alpha = 0.5) +
+  geom_ribbon(aes(ymin = mean_cell_counts - se_cell_counts, ymax = mean_cell_counts + se_cell_counts, fill = Genotype), alpha = 0.2, color = NA) +  # Error ribbon for standard deviation
+  labs(
+    #title = "Mean Sox9 Counts by Genotype and Distance from Pia",
+    x = "Distance from Pia (% total cortical thickness)",
+    y = bquote('Sox9+ nuclei / 100k '~um^2),
+    color = "Genotype",
+    fill = "Genotype"
+  ) + 
+  #xlim(0,70) +
+  #ylim(0, 80) +
+  theme_minimal() +
+  scale_colour_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_fill_manual(values = c("dodgerblue", "firebrick1")) +
+  theme(legend.position = "bottom")  # Optional: Adjust legend position
+
+
+png(filename = "p21_Ctnnd2_lineplot_Sox9_binned.png", width = 1200, height = 850, res = 300)
+  Sox9_binned_density_plot
+  dev.off()
+Sox9_binned_density_plot
+```
+```{r}
+library(car)
+Sox9_binned_organized$dist_norm <- as.factor(Sox9_binned_organized$dist_norm)
+model_sox9 = lm(Cell.Counts ~ dist_norm + Genotype + dist_norm:Genotype,
+           data = Sox9_binned_organized)
+summary(model_sox9)
+
+Anova(model_sox9, type = "II")
+
+```
+
+```{r}
+library(multcompView)
+library(lsmeans)
+library(multcomp)
+
+leastsquare <- lsmeans(model_sox9, pairwise ~ Genotype | dist_norm, adjust = "tukey")
+summary(leastsquare$contrasts)
+```
+
+
+```{r}
+Olig2_binned_summary <- Olig2_binned_organized %>%
+  group_by(dist_norm, Genotype) %>%
+  summarise(
+    mean_cell_counts = mean(Cell.Counts/1.21, na.rm = TRUE),
+    se_cell_counts = std.error(Cell.Counts/1.21, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+#reorder so WT is listed first in legend
+Olig2_binned_summary$Genotype <- factor(Olig2_binned_summary$Genotype, levels = c("WT", "KO"))
+
+# Create ggplot with lines and shaded error regions
+Olig2_binned_density_plot <- # Create the plot
+ggplot(Olig2_binned_summary, aes(x = dist_norm, y = mean_cell_counts, color = Genotype, group = Genotype)) +
+  geom_line(size = 1) +  # Line plot for mean Cell.Counts
+  geom_point(size = 3, alpha = 0.5) +
+  geom_ribbon(aes(ymin = mean_cell_counts - se_cell_counts, ymax = mean_cell_counts + se_cell_counts, fill = Genotype), alpha = 0.2, color = NA) +  # Error ribbon for standard deviation
+  labs(
+    #title = "Mean Olig2 Counts by Genotype and Distance from Pia",
+    x = "Distance from Pia (% total cortical thickness)",
+    y = bquote('Olig2+ nuclei / 100k '~um^2),
+    color = "Genotype",
+    fill = "Genotype"
+  ) +
+  #xlim(0, 70) + 
+  #ylim(0, 75) + 
+  theme_minimal() +
+  scale_colour_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_fill_manual(values = c("dodgerblue", "firebrick1")) +
+  theme(legend.position = "bottom")  # Optional: Adjust legend position
+
+
+png(filename = "p21_Ctnnd2_lineplot_Olig2_binned.png", width = 1200, height = 850, res = 300)
+  Olig2_binned_density_plot
+  dev.off()
+Olig2_binned_density_plot
+```
+
+```{r}
+library(car)
+Olig2_binned_organized$dist_norm <- as.factor(Olig2_binned_organized$dist_norm)
+model_olig2 = lm(Cell.Counts ~ dist_norm + Genotype + dist_norm:Genotype,
+           data = Olig2_binned_organized)
+summary(model_olig2)
+
+Anova(model_olig2, type = "II")
+
+```
+
+```{r}
+library(multcompView)
+library(lsmeans)
+library(multcomp)
+
+leastsquare <- lsmeans(model_olig2, pairwise ~ Genotype | dist_norm, adjust = "tukey")
+summary(leastsquare$contrasts)
+```
+
+
+

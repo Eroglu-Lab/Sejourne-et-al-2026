@@ -1,0 +1,651 @@
+---
+title: "zbtb20_peaks_pull_promoters"
+author: "G Sejourne"
+date: "2026-01-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r cars}
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager")
+}
+
+BiocManager::install(c(
+  "TxDb.Mmusculus.UCSC.mm10.knownGene",
+  "org.Mm.eg.db",
+  "GenomicRanges",
+  "rtracklayer"
+))
+
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(org.Mm.eg.db)
+library(GenomicRanges)
+library(rtracklayer)
+library(BSgenome.Mmusculus.UCSC.mm10)
+
+```
+
+```{r}
+wt.genes.df <- read.csv("./data/caras_chipseeker_annotations_zbtb20_wt.csv")
+wt.genes <- unique(wt.genes.df[wt.genes.df$annot_class == "Promoter",]$SYMBOL)
+
+ko.genes.df <- read.csv("./data/caras_chipseeker_annotations_zbtb20_ko.csv")
+ko.genes <- unique(ko.genes.df[ko.genes.df$annot_class == "Promoter",]$SYMBOL)
+```
+
+```{r cars}
+
+x <-list(wt.genes, 
+         ko.genes)
+names(x) <- c("WT", 
+              "KO")
+v.table <- gplots::venn(x)
+v.table
+
+```
+
+```{r}
+wt_unique <- attr(v.table, "intersections")$`WT`
+wt_unique <- wt_unique[wt_unique%in% snrnaseq.genes]
+length(wt_unique)
+write.csv(wt_unique, "wt.gene.list.csv")
+
+ko_unique <- attr(v.table, "intersections")$`KO`
+ko_unique <- ko_unique[ko_unique%in% snrnaseq.genes]
+length(ko_unique)
+write.csv(ko_unique, "ko.gene.list.csv")
+
+intersect.genes <- attr(v.table, "intersections")$`WT:KO`
+intersect.genes <- intersect.genes[intersect.genes%in% snrnaseq.genes]
+length(intersect.genes)
+write.csv(intersect.genes, "intersect.gene.list.csv")
+
+snrnaseq.genes.df <- read.csv("./data/all_Wilcoxon_results_250106.csv")
+snrnaseq.genes <- snrnaseq.genes.df$KO_n
+
+union.genes <- c(wt_unique, ko_unique, intersect.genes)
+length(union.genes)
+union.genes <- union.genes[union.genes%in% snrnaseq.genes]
+length(union.genes)
+
+ko_tss_clustered <- read.table("./data/zbtb20_ko_TSS_clustered_meonly.bed")
+ko_tss_cluster1 <- ko_tss_clustered[ko_tss_clustered$V13 == "cluster_1",]$V4
+ko_tss_cluster2 <- ko_tss_clustered[ko_tss_clustered$V13 == "cluster_2",]$V4
+length(ko_tss_cluster1)
+length(ko_tss_cluster2)
+```
+
+
+```{r read in data and subset based on results}
+# Convert MGI symbols to Entrez IDs
+#entrez_ids <- mget(genes, org.Mm.egSYMBOL2EG, ifnotfound = NA)
+entrez_ids <- AnnotationDbi::select(org.Mm.eg.db, keys = wt_unique, columns = "ENTREZID", keytype = "SYMBOL")
+
+# Find the gene symbols with missing Entrez IDs
+missing_symbols <- names(entrez_ids[is.na(entrez_ids)])
+
+# Print the missing gene symbols
+length(missing_symbols)
+
+# Print results
+head(entrez_ids)
+
+
+```
+
+```{r pull promoter sequences for missing genes}
+
+genome <- BSgenome.Mmusculus.UCSC.mm10
+txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
+
+gn <- sort(genes(txdb))
+gn <- gn[gn$gene_id %in% entrez_ids$ENTREZID, ] #gm19951 is not available.
+
+tss <- promoters(gn, upstream=0, downstream=1) #function to pull promoters loci given a list of gene IDs (entrez)
+
+tss.df <- as.data.frame(tss)
+tss.df$EntrezGeneID <- row.names(tss.df)
+tss.df$mgi_symbol <-  AnnotationDbi::select(org.Mm.eg.db, keys = tss.df$EntrezGeneID, columns = "SYMBOL", keytype = "ENTREZID")
+
+missing <- wt_unique[!(wt_unique %in% tss.df$mgi_symbol$SYMBOL)]
+print(missing)
+print(tss.df)
+
+```
+
+```{r}
+# Prepare BED
+bed <- data.frame(
+  chrom  = as.character(tss.df$seqnames),
+  start  = tss.df$start - 1, # BED is 0-based
+  end    = tss.df$end,
+  name   = tss.df$mgi_symbol$SYMBOL,
+  score  = 0,
+  strand = as.character(tss.df$strand)
+)
+```
+
+
+```{r}
+write.table(
+  bed,
+  file = "zbtb20_wt_promoters_TSS.bed",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+```
+
+
+```{r}
+# Prepare BED for union +/- 1.5kb for motif analysis
+bed <- data.frame(
+  chrom  = as.character(tss.df$seqnames),
+  start  = tss.df$start - 1500, # BED is 0-based
+  end    = tss.df$end + 1500,
+  name   = tss.df$mgi_symbol$SYMBOL,
+  score  = 0,
+  strand = as.character(tss.df$strand)
+)
+```
+
+
+```{r}
+write.table(
+  bed,
+  file = "zbtb20_wt_promoters_TSS_1.5kb.bed",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+```
+
+
+```{r read in data and subset based on results}
+# Convert MGI symbols to Entrez IDs
+#entrez_ids <- mget(genes, org.Mm.egSYMBOL2EG, ifnotfound = NA)
+entrez_ids <- AnnotationDbi::select(org.Mm.eg.db, keys = ko_unique, columns = "ENTREZID", keytype = "SYMBOL")
+
+# Find the gene symbols with missing Entrez IDs
+missing_symbols <- names(entrez_ids[is.na(entrez_ids)])
+
+# Print the missing gene symbols
+length(missing_symbols)
+
+# Print results
+head(entrez_ids)
+
+
+```
+
+```{r pull promoter sequences for missing genes}
+
+genome <- BSgenome.Mmusculus.UCSC.mm10
+txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
+
+gn <- sort(genes(txdb))
+gn <- gn[gn$gene_id %in% entrez_ids$ENTREZID, ] #gm19951 is not available.
+
+tss <- promoters(gn, upstream=0, downstream=1) #function to pull promoters loci given a list of gene IDs (entrez)
+
+tss.df <- as.data.frame(tss)
+tss.df$EntrezGeneID <- row.names(tss.df)
+tss.df$mgi_symbol <-  AnnotationDbi::select(org.Mm.eg.db, keys = tss.df$EntrezGeneID, columns = "SYMBOL", keytype = "ENTREZID")
+
+missing <- ko_unique[!(ko_unique %in% tss.df$mgi_symbol$SYMBOL)]
+print(missing)
+print(tss.df)
+
+```
+
+```{r}
+# Prepare BED
+bed <- data.frame(
+  chrom  = as.character(tss.df$seqnames),
+  start  = tss.df$start - 1, # BED is 0-based
+  end    = tss.df$end,
+  name   = tss.df$mgi_symbol$SYMBOL,
+  score  = 0,
+  strand = as.character(tss.df$strand)
+)
+```
+
+
+```{r}
+write.table(
+  bed,
+  file = "zbtb20_ko_promoters_TSS.bed",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+```
+
+
+```{r}
+# Prepare BED for union +/- 1.5kb for motif analysis
+bed <- data.frame(
+  chrom  = as.character(tss.df$seqnames),
+  start  = tss.df$start - 1500, # BED is 0-based
+  end    = tss.df$end + 1500,
+  name   = tss.df$mgi_symbol$SYMBOL,
+  score  = 0,
+  strand = as.character(tss.df$strand)
+)
+```
+
+
+```{r}
+write.table(
+  bed,
+  file = "zbtb20_ko_promoters_TSS_1.5kb.bed",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+```
+
+
+```{r read in data and subset based on results}
+# Convert MGI symbols to Entrez IDs
+#entrez_ids <- mget(genes, org.Mm.egSYMBOL2EG, ifnotfound = NA)
+entrez_ids <- AnnotationDbi::select(org.Mm.eg.db, keys = intersect.genes, columns = "ENTREZID", keytype = "SYMBOL")
+
+# Find the gene symbols with missing Entrez IDs
+missing_symbols <- names(entrez_ids[is.na(entrez_ids)])
+
+# Print the missing gene symbols
+length(missing_symbols)
+
+# Print results
+head(entrez_ids)
+
+
+```
+
+```{r pull promoter sequences for missing genes}
+
+genome <- BSgenome.Mmusculus.UCSC.mm10
+txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
+
+gn <- sort(genes(txdb))
+gn <- gn[gn$gene_id %in% entrez_ids$ENTREZID, ] #gm19951 is not available.
+
+tss <- promoters(gn, upstream=0, downstream=1) #function to pull promoters loci given a list of gene IDs (entrez)
+
+tss.df <- as.data.frame(tss)
+tss.df$EntrezGeneID <- row.names(tss.df)
+tss.df$mgi_symbol <-  AnnotationDbi::select(org.Mm.eg.db, keys = tss.df$EntrezGeneID, columns = "SYMBOL", keytype = "ENTREZID")
+
+missing <- intersect.genes[!(intersect.genes %in% tss.df$mgi_symbol$SYMBOL)]
+print(missing)
+print(tss.df)
+
+```
+
+```{r}
+# Prepare BED
+bed <- data.frame(
+  chrom  = as.character(tss.df$seqnames),
+  start  = tss.df$start - 1, # BED is 0-based
+  end    = tss.df$end,
+  name   = tss.df$mgi_symbol$SYMBOL,
+  score  = 0,
+  strand = as.character(tss.df$strand)
+)
+```
+
+
+```{r}
+write.table(
+  bed,
+  file = "zbtb20_intersect_promoters_TSS.bed",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+```
+
+
+```{r}
+# Prepare BED for union +/- 1.5kb for motif analysis
+bed <- data.frame(
+  chrom  = as.character(tss.df$seqnames),
+  start  = tss.df$start - 1500, # BED is 0-based
+  end    = tss.df$end + 1500,
+  name   = tss.df$mgi_symbol$SYMBOL,
+  score  = 0,
+  strand = as.character(tss.df$strand)
+)
+```
+
+
+```{r}
+write.table(
+  bed,
+  file = "zbtb20_intersect_promoters_TSS_1.5kb.bed",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+```
+
+
+```{r read in data and subset based on results}
+# Convert MGI symbols to Entrez IDs
+#entrez_ids <- mget(genes, org.Mm.egSYMBOL2EG, ifnotfound = NA)
+entrez_ids <- AnnotationDbi::select(org.Mm.eg.db, keys = snrnaseq.genes, columns = "ENTREZID", keytype = "SYMBOL")
+
+# Find the gene symbols with missing Entrez IDs
+missing_symbols <- names(entrez_ids[is.na(entrez_ids)])
+
+# Print the missing gene symbols
+length(missing_symbols)
+
+# Print results
+head(entrez_ids)
+
+
+```
+
+```{r pull promoter sequences for missing genes}
+
+genome <- BSgenome.Mmusculus.UCSC.mm10
+txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
+
+gn <- sort(genes(txdb))
+gn <- gn[gn$gene_id %in% entrez_ids$ENTREZID, ] #gm19951 is not available.
+
+tss <- promoters(gn, upstream=0, downstream=1) #function to pull promoters loci given a list of gene IDs (entrez)
+
+tss.df <- as.data.frame(tss)
+tss.df$EntrezGeneID <- row.names(tss.df)
+tss.df$mgi_symbol <-  AnnotationDbi::select(org.Mm.eg.db, keys = tss.df$EntrezGeneID, columns = "SYMBOL", keytype = "ENTREZID")
+
+missing <- snrnaseq.genes[!(snrnaseq.genes %in% tss.df$mgi_symbol$SYMBOL)]
+print(missing)
+print(tss.df)
+
+```
+
+```{r}
+# Prepare BED
+bed <- data.frame(
+  chrom  = as.character(tss.df$seqnames),
+  start  = tss.df$start - 1, # BED is 0-based
+  end    = tss.df$end,
+  name   = tss.df$mgi_symbol$SYMBOL,
+  score  = 0,
+  strand = as.character(tss.df$strand)
+)
+```
+
+
+```{r}
+write.table(
+  bed,
+  file = "snrnaseq_promoters_TSS.bed",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+```
+
+```{r}
+# Prepare BED
+bed <- data.frame(
+  chrom  = as.character(tss.df$seqnames),
+  start  = tss.df$start - 1500, # BED is 0-based
+  end    = tss.df$end + 1500,
+  name   = tss.df$mgi_symbol$SYMBOL,
+  score  = 0,
+  strand = as.character(tss.df$strand)
+)
+```
+
+
+```{r}
+write.table(
+  bed,
+  file = "snrnaseq_promoters_TSS_3kb.bed",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+```
+
+```{r read in data and subset based on results}
+# Convert MGI symbols to Entrez IDs
+#entrez_ids <- mget(genes, org.Mm.egSYMBOL2EG, ifnotfound = NA)
+entrez_ids <- AnnotationDbi::select(org.Mm.eg.db, keys = union.genes, columns = "ENTREZID", keytype = "SYMBOL")
+
+# Find the gene symbols with missing Entrez IDs
+missing_symbols <- names(entrez_ids[is.na(entrez_ids)])
+
+# Print the missing gene symbols
+length(missing_symbols)
+
+# Print results
+head(entrez_ids)
+
+
+```
+
+```{r pull promoter sequences for missing genes}
+
+genome <- BSgenome.Mmusculus.UCSC.mm10
+txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
+
+gn <- sort(genes(txdb))
+gn <- gn[gn$gene_id %in% entrez_ids$ENTREZID, ] #gm19951 is not available.
+
+tss <- promoters(gn, upstream=0, downstream=1) #function to pull promoters loci given a list of gene IDs (entrez)
+
+tss.df <- as.data.frame(tss)
+tss.df$EntrezGeneID <- row.names(tss.df)
+tss.df$mgi_symbol <-  AnnotationDbi::select(org.Mm.eg.db, keys = tss.df$EntrezGeneID, columns = "SYMBOL", keytype = "ENTREZID")
+
+missing <- union.genes[!(union.genes %in% tss.df$mgi_symbol$SYMBOL)]
+print(missing)
+print(tss.df)
+
+```
+
+```{r}
+# Prepare BED for union
+bed <- data.frame(
+  chrom  = as.character(tss.df$seqnames),
+  start  = tss.df$start - 1, # BED is 0-based
+  end    = tss.df$end,
+  name   = tss.df$mgi_symbol$SYMBOL,
+  score  = 0,
+  strand = as.character(tss.df$strand)
+)
+```
+
+
+```{r}
+write.table(
+  bed,
+  file = "union_promoters_TSS.bed",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+```
+
+```{r}
+# Prepare BED
+bed <- data.frame(
+  chrom  = as.character(tss.df$seqnames),
+  start  = tss.df$start - 1500, # BED is 0-based
+  end    = tss.df$end + 1500,
+  name   = tss.df$mgi_symbol$SYMBOL,
+  score  = 0,
+  strand = as.character(tss.df$strand)
+)
+```
+
+
+```{r}
+write.table(
+  bed,
+  file = "union_promoters_TSS_1.5kb.bed",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+```
+
+```{r read in data and subset based on results}
+# Convert MGI symbols to Entrez IDs
+#entrez_ids <- mget(genes, org.Mm.egSYMBOL2EG, ifnotfound = NA)
+entrez_ids <- AnnotationDbi::select(org.Mm.eg.db, keys = ko_tss_cluster1, columns = "ENTREZID", keytype = "SYMBOL")
+
+# Find the gene symbols with missing Entrez IDs
+missing_symbols <- names(entrez_ids[is.na(entrez_ids)])
+
+# Print the missing gene symbols
+length(missing_symbols)
+
+# Print results
+head(entrez_ids)
+
+
+```
+
+```{r pull promoter sequences for missing genes}
+
+genome <- BSgenome.Mmusculus.UCSC.mm10
+txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
+
+gn <- sort(genes(txdb))
+gn <- gn[gn$gene_id %in% entrez_ids$ENTREZID, ] #gm19951 is not available.
+
+tss <- promoters(gn, upstream=0, downstream=1) #function to pull promoters loci given a list of gene IDs (entrez)
+
+tss.df <- as.data.frame(tss)
+tss.df$EntrezGeneID <- row.names(tss.df)
+tss.df$mgi_symbol <-  AnnotationDbi::select(org.Mm.eg.db, keys = tss.df$EntrezGeneID, columns = "SYMBOL", keytype = "ENTREZID")
+
+missing <- ko_tss_cluster1[!(ko_tss_cluster1 %in% tss.df$mgi_symbol$SYMBOL)]
+print(missing)
+print(tss.df)
+
+```
+
+
+
+```{r}
+# Prepare BED for union +/- 1.5kb for motif analysis
+bed <- data.frame(
+  chrom  = as.character(tss.df$seqnames),
+  start  = tss.df$start - 1500, # BED is 0-based
+  end    = tss.df$end + 1500,
+  name   = tss.df$mgi_symbol$SYMBOL,
+  score  = 0,
+  strand = as.character(tss.df$strand)
+)
+```
+
+
+```{r}
+write.table(
+  bed,
+  file = "ko_unique_cluster1_TSS_1.5kb.bed",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+```
+
+```{r read in data and subset based on results}
+# Convert MGI symbols to Entrez IDs
+#entrez_ids <- mget(genes, org.Mm.egSYMBOL2EG, ifnotfound = NA)
+entrez_ids <- AnnotationDbi::select(org.Mm.eg.db, keys = ko_tss_cluster2, columns = "ENTREZID", keytype = "SYMBOL")
+
+# Find the gene symbols with missing Entrez IDs
+missing_symbols <- names(entrez_ids[is.na(entrez_ids)])
+
+# Print the missing gene symbols
+length(missing_symbols)
+
+# Print results
+head(entrez_ids)
+
+
+```
+
+```{r pull promoter sequences for missing genes}
+
+genome <- BSgenome.Mmusculus.UCSC.mm10
+txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
+
+gn <- sort(genes(txdb))
+gn <- gn[gn$gene_id %in% entrez_ids$ENTREZID, ] #gm19951 is not available.
+
+tss <- promoters(gn, upstream=0, downstream=1) #function to pull promoters loci given a list of gene IDs (entrez)
+
+tss.df <- as.data.frame(tss)
+tss.df$EntrezGeneID <- row.names(tss.df)
+tss.df$mgi_symbol <-  AnnotationDbi::select(org.Mm.eg.db, keys = tss.df$EntrezGeneID, columns = "SYMBOL", keytype = "ENTREZID")
+
+missing <- ko_tss_cluster2[!(ko_tss_cluster2 %in% tss.df$mgi_symbol$SYMBOL)]
+print(missing)
+print(tss.df)
+
+```
+
+
+
+```{r}
+# Prepare BED for union +/- 1.5kb for motif analysis
+bed <- data.frame(
+  chrom  = as.character(tss.df$seqnames),
+  start  = tss.df$start - 1500, # BED is 0-based
+  end    = tss.df$end + 1500,
+  name   = tss.df$mgi_symbol$SYMBOL,
+  score  = 0,
+  strand = as.character(tss.df$strand)
+)
+```
+
+
+```{r}
+write.table(
+  bed,
+  file = "ko_unique_cluster2_TSS_1.5kb.bed",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+```

@@ -1,0 +1,131 @@
+---
+title: "zbtb20_peaks_pull_promoters"
+author: "G Sejourne"
+date: "2026-01-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r cars}
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager")
+}
+
+BiocManager::install(c(
+  "TxDb.Mmusculus.UCSC.mm10.knownGene",
+  "org.Mm.eg.db",
+  "GenomicRanges",
+  "rtracklayer"
+))
+
+library(TxDb.Mmusculus.UCSC.mm10.knownGene)
+library(org.Mm.eg.db)
+library(GenomicRanges)
+library(rtracklayer)
+library(BSgenome.Mmusculus.UCSC.mm10)
+
+```
+
+```{r}
+# read in genes with zbtb20 peaks called by 5/6 callers and identified as promoters
+zb.genes.df <- read.csv("./data/caras_chipseeker_annotations_astro_zbtb20.csv")
+zb.genes <- unique(zb.genes.df[zb.genes.df$annot_class == "Promoter",]$SYMBOL)
+
+# filter by genes detected in p28 vis ctx snrnaseq
+snrnaseq.genes.df <- read.csv("./data/ASTRO_Wilcoxon_results_250106.csv")
+snrnaseq.genes <- snrnaseq.genes.df$KO_n
+zb.genes <- zb.genes[zb.genes%in% snrnaseq.genes]
+```
+
+
+```{r read in data and subset based on results}
+# Convert MGI symbols to Entrez IDs
+#entrez_ids <- mget(genes, org.Mm.egSYMBOL2EG, ifnotfound = NA)
+entrez_ids <- AnnotationDbi::select(org.Mm.eg.db, keys = zb.genes, columns = "ENTREZID", keytype = "SYMBOL")
+
+# Find the gene symbols with missing Entrez IDs
+missing_symbols <- names(entrez_ids[is.na(entrez_ids)])
+
+# Print the missing gene symbols
+length(missing_symbols)
+
+# Print results
+head(entrez_ids)
+
+```
+
+```{r pull promoter sequences for missing genes}
+
+genome <- BSgenome.Mmusculus.UCSC.mm10
+txdb <- TxDb.Mmusculus.UCSC.mm10.knownGene
+
+gn <- sort(genes(txdb))
+gn <- gn[gn$gene_id %in% entrez_ids$ENTREZID, ] #gm19951 is not available.
+
+tss <- promoters(gn, upstream=0, downstream=1) #function to pull promoters loci given a list of gene IDs (entrez)
+
+tss.df <- as.data.frame(tss)
+tss.df$EntrezGeneID <- row.names(tss.df)
+tss.df$mgi_symbol <-  AnnotationDbi::select(org.Mm.eg.db, keys = tss.df$EntrezGeneID, columns = "SYMBOL", keytype = "ENTREZID")
+
+missing <- zb.genes[!(zb.genes %in% tss.df$mgi_symbol$SYMBOL)]
+print(missing)
+#print(tss.df)
+
+```
+
+```{r}
+# Prepare BED
+bed <- data.frame(
+  chrom  = as.character(tss.df$seqnames),
+  start  = tss.df$start - 1, # BED is 0-based
+  end    = tss.df$end,
+  name   = tss.df$mgi_symbol$SYMBOL,
+  score  = 0,
+  strand = as.character(tss.df$strand)
+)
+```
+
+
+```{r}
+write.table(
+  bed,
+  file = "zbtb20_astro_promoters_TSS.bed",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+```
+
+
+```{r}
+# Prepare BED for zbtb20 loci +/- 1.5kb for motif analysis
+bed <- data.frame(
+  chrom  = as.character(tss.df$seqnames),
+  start  = tss.df$start - 1500, # BED is 0-based
+  end    = tss.df$end + 1500,
+  name   = tss.df$mgi_symbol$SYMBOL,
+  score  = 0,
+  strand = as.character(tss.df$strand)
+)
+```
+
+
+```{r}
+write.table(
+  bed,
+  file = "zbtb20_astro_promoters_TSS_1.5kb.bed",
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+)
+
+```
+

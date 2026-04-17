@@ -1,0 +1,345 @@
+---
+title: "bcas1_mbp_analysis"
+format: html
+---
+
+
+
+```{r}
+#packages
+if(!require(lsmeans)){install.packages("lsmeans")}
+if(!require(multcompView)){install.packages("multcompView")}
+if(!require(dplyr)){install.packages("dplyr")}
+if(!require(rcompanion)){install.packages("rcompanion")}
+if(!require(rcompanion)){install.packages("ggprism")}
+
+library(tidyverse)
+library(stringr)
+library(car)
+library(FSA)
+library(ggpubr)
+library(ggbeeswarm)
+library(ggprism)
+library(ragg)
+
+if(!require(psych)){install.packages("psych")}
+if(!require(FSA)){install.packages("FSA")}
+if(!require(lattice)){install.packages("lattice")}
+if(!require(lsr)){install.packages("lsr")} 
+```
+
+```{r}
+
+#reading in csv files and cleaning
+
+#Cell Data
+Detections_data <- read.csv("DATA/merged_bcas1_mbp_data_cell.csv")
+
+Detections_data <- Detections_data %>%
+  mutate(
+    # Remove optional 'csv' suffix
+    Image.Name = str_remove(Image.Name, "csv$"),
+    # Extract components with regex
+    Animal      = str_extract(Image.Name, "^[0-9]+"),
+    Sex         = str_extract(Image.Name, "_[FM]_") %>% str_remove_all("_"),
+    Genotype    = str_extract(Image.Name, "_(WT|KO)_") %>% str_remove_all("_"),
+    slice       = str_extract(Image.Name, "s[0-9]+") %>% str_remove("s"),
+    hemisphere  = str_extract(Image.Name, "h[0-9]+") %>% str_remove("h")
+  )
+
+dimensions <- read.csv("DATA/Bcas1_heights_widths.csv")
+dimensions$Image <- str_extract(
+  dimensions$Image,
+  "[0-9]{6}_[FM]_[A-Z]+_s[0-9]+h[0-9]+"
+)
+
+dimensions <- dimensions %>%
+  extract(
+    Image,
+    into = c("Animal", "Sex", "Genotype", "slice", "hemisphere"),
+    # Look for pattern near the end of the filename
+    regex = "([0-9]{6})_([FM])_([A-Z]{2})_s([0-9]+)h([0-9]+)",
+    remove = FALSE
+  )
+
+```
+
+```{r}
+Detections_data$Bcas1 <- ifelse(Detections_data$Type == 1, 1, 0)
+Detections_data$Bcas1.MBP <- ifelse(Detections_data$Type == 2, 1, 0)
+
+```
+
+```{r}
+# ROI density data
+unique_images <- unique(Detections_data$Image.Name)
+
+# Create an empty data frame to store results
+df_counts_roi <- data.frame(Image = character(),
+                            Animal = character(),
+                            Genotype = character(),
+                            nfol = integer(),
+                            mfol = integer(),
+                            bcas1 = integer(),
+                            area = integer(),
+                            opc_density = integer(),
+                            mol_density = integer(),
+                            int_density = integer(),
+                            oligo_density = integer(),
+                            stringsAsFactors = FALSE)
+
+for (img in unique_images) {
+  temp <- Detections_data[Detections_data$Image == img, ]
+
+  # ---- Compute image areas ----
+  width <- 500 / .8791
+  height <- dimensions[dimensions$Image == img,]$Height / .8791
+  area <- height * width /100000
+  Animal <- unique(temp$Animal)
+  Genotype <- unique(temp$Genotype)
+
+  # ---- Count cells in each class ----
+
+  nfol_total <- sum(temp$Bcas1 == "1") - sum(temp$Bcas1.MBP == "1")
+  mfol_total <- sum(temp$Bcas1.MBP == "1")
+  bcas1_total <- sum(temp$Bcas1 == "1")
+  
+  nfol_density = nfol_total / area
+  mfol_density = mfol_total / area
+  bcas1_density = bcas1_total / area
+
+  # ---- Store results ----
+  df_counts_roi <- rbind(df_counts_roi,
+    data.frame(
+      Image = img,
+      Animal = Animal,
+      Genotype = Genotype,
+      nfol = nfol_total,
+      mfol = mfol_total,
+      bcas1 = bcas1_total,
+      area = area,
+      nfol_density = nfol_density,
+      mfol_density = mfol_density,
+      bcas1_density = bcas1_density
+    )
+  )
+}
+
+write.csv(df_counts_roi, "./DATA/bcas1_mbp_density_rois.csv", row.names = FALSE)
+```
+
+
+```{r}
+#BINNED ANALYSIS
+#obtaining maximum Y value for each image and normalizing their Y values to that to create and sort cells into 10 equal bins 
+combined_detections_BCas1MBPbinned <- Detections_data %>%
+  group_by(Image.Name) %>%
+  mutate(
+    Y_max = max(`Y`, na.rm = TRUE),
+    Y_norm = `Y` / Y_max,
+    bin = 10 * round(Y_norm + 0.05, digits = 1)
+  ) %>%
+  ungroup()
+
+# Assume df has columns: Image, Class
+
+# First, get unique image IDs
+unique_images <- unique(combined_detections_BCas1MBPbinned$Image.Name)
+# Initialize empty results data frame
+combined_detections_BCas1MBPbinned_counts <- data.frame(
+  Image = character(),
+  bin = integer(),
+  Animal = character(),
+  Genotype = character(),
+  Bcas1 = numeric(),
+  Bcas1.MBP = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Loop through images and bins
+unique_images <- unique(combined_detections_BCas1MBPbinned$Image.Name)
+
+for (img in unique_images) {
+    temp_totals <- combined_detections_BCas1MBPbinned[combined_detections_BCas1MBPbinned$Image.Name == img, ]
+    Bcas1_pos_total <- sum(temp_totals$Bcas1 == "1")
+    Bcas1_pos_MBP_pos_total <- sum(temp_totals$Bcas1.MBP == "1")
+    Bcas1_pos_MBP_neg_total <- sum(temp_totals$Bcas1 == "1") - sum(temp_totals$Bcas1.MBP == "1")
+  for (b in 1:10) {
+    temp <- combined_detections_BCas1MBPbinned %>%
+      filter(Image.Name == img, bin == b)
+    
+    if (nrow(temp) == 0) next
+    
+    height = temp$Y_max[1] / .8791
+    width = 500 / .8791
+    area_mm2 <- height * width / 100000
+    
+    Bcas1_pos <- 100 *sum(temp$Bcas1 == "1") / Bcas1_pos_total
+    Bcas1_pos_MBP_pos <-  100 *sum(temp$Bcas1.MBP == "1") / Bcas1_pos_MBP_pos_total
+    Bcas1_pos_MBP_neg <- 100 *(sum(temp$Bcas1 == "1") - sum(temp$Bcas1.MBP == "1")) / Bcas1_pos_MBP_neg_total
+    
+    combined_detections_BCas1MBPbinned_counts <- rbind(
+      combined_detections_BCas1MBPbinned_counts,
+      data.frame(
+        Image = img,
+        bin = b,
+        Animal = unique(temp$Animal),
+        Genotype = unique(temp$Genotype),
+        Bcas1_pos = Bcas1_pos,
+        Bcas1_pos_MBP_pos = Bcas1_pos_MBP_pos,
+        Bcas1_pos_MBP_neg = Bcas1_pos_MBP_neg
+      )
+    )
+  }
+}
+
+combined_detections_BCas1MBPbinned_counts <- combined_detections_BCas1MBPbinned_counts %>%
+  filter(!((Bcas1_pos == "NaN" | Bcas1_pos == "Inf") |
+           (Bcas1_pos_MBP_pos == "NaN" | Bcas1_pos_MBP_pos == "Inf") |
+           (Bcas1_pos_MBP_neg == "NaN" | Bcas1_pos_MBP_neg == "Inf")))
+
+# View result
+print(combined_detections_BCas1MBPbinned_counts)
+```
+
+```{r}
+combined_detections_BCas1MBPbinned_counts_animal <- combined_detections_BCas1MBPbinned_counts %>%
+  group_by(Genotype, Animal, bin) %>%
+  summarise(Bcas1_pos = mean(Bcas1_pos),
+            Bcas1_pos_MBP_pos = mean(Bcas1_pos_MBP_pos),
+            Bcas1_pos_MBP_neg = mean(Bcas1_pos_MBP_neg),
+            .groups = "drop")
+
+# make 'bin' a factor so all 10 values are evaluated separately
+combined_detections_BCas1MBPbinned_counts_animal$bin <- as.factor(combined_detections_BCas1MBPbinned_counts_animal$bin)
+
+print(combined_detections_BCas1MBPbinned_counts_animal)
+```
+
+```{r}
+# statistics for total Bcas1 counts
+Bcas1_pos = lm(Bcas1_pos ~ bin * Genotype,
+           data = combined_detections_BCas1MBPbinned_counts_animal)
+summary(Bcas1_pos)
+Anova(Bcas1_pos, type = "II")
+```
+
+```{r}
+library(plotrix)
+#line plot for total Bcas1+ Counts
+combined_detections_BCas1MBPbinned_counts_animal_summary <- combined_detections_BCas1MBPbinned_counts_animal %>%
+  group_by(bin, Genotype) %>%
+  summarise(
+    mean_Bcas1_pos = mean(Bcas1_pos),
+    se_Bcas1_pos = std.error(Bcas1_pos),
+    .groups = "drop"
+  )
+#reorder so WT is listed first in legend
+combined_detections_BCas1MBPbinned_counts_animal_summary$Genotype <- factor(combined_detections_BCas1MBPbinned_counts_animal_summary$Genotype, levels = c("WT", "KO"))
+
+# Create ggplot with lines and shaded error regions
+Bcas1_pos_binned_density_plot <- # Create the plot
+ggplot(combined_detections_BCas1MBPbinned_counts_animal_summary, aes(x = bin, y = mean_Bcas1_pos, color = Genotype, group = Genotype)) +
+  geom_line(size = 1) +  # Line plot for mean Cell.Counts
+  geom_point(size = 3, alpha = 0.5) +
+  geom_ribbon(aes(ymin = mean_Bcas1_pos - se_Bcas1_pos, ymax = mean_Bcas1_pos + se_Bcas1_pos, fill = Genotype), alpha = 0.2, color = NA) +  # Error ribbon for standard deviation
+  labs(
+    x = "Distance from Pia (% total cortical thickness)",
+    y = expression("Proportion within bin (%)"),
+    color = "Genotype",
+    fill = "Genotype"
+  ) +
+  theme_minimal()  +
+  scale_colour_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_fill_manual(values = c("dodgerblue", "firebrick1")) +
+  theme(legend.position = "bottom")  # Optional: Adjust legend position
+png(filename = "p30_Ctnnd2_lineplot_Bcas1_pos_counts_proportional_binned.png", width = 1200, height = 850, res = 300)
+  Bcas1_pos_binned_density_plot
+  dev.off()
+Bcas1_pos_binned_density_plot
+```
+```{r}
+# statistics for Bcas1+/MBP+ (MFOL) counts
+Bcas1_pos_MBP_pos = lm(Bcas1_pos_MBP_pos ~ bin * Genotype,
+           data = combined_detections_BCas1MBPbinned_counts_animal)
+summary(Bcas1_pos_MBP_pos)
+Anova(Bcas1_pos_MBP_pos, type = "II")
+```
+
+```{r}
+library(plotrix)
+#line plot for Bcas1+/MBP+ Counts
+combined_detections_BCas1MBPbinned_counts_animal_summary <- combined_detections_BCas1MBPbinned_counts_animal %>%
+  group_by(bin, Genotype) %>%
+  summarise(
+    mean_Bcas1_pos_MBP_pos = mean(Bcas1_pos_MBP_pos),
+    se_Bcas1_pos_MBP_pos = std.error(Bcas1_pos_MBP_pos),
+    .groups = "drop"
+  )
+#reorder so WT is listed first in legend
+combined_detections_BCas1MBPbinned_counts_animal_summary$Genotype <- factor(combined_detections_BCas1MBPbinned_counts_animal_summary$Genotype, levels = c("WT", "KO"))
+
+# Create ggplot with lines and shaded error regions
+Bcas1_pos_MBP_pos_binned_density_plot <- # Create the plot
+ggplot(combined_detections_BCas1MBPbinned_counts_animal_summary, aes(x = bin, y = mean_Bcas1_pos_MBP_pos, color = Genotype, group = Genotype)) +
+  geom_line(size = 1) +  # Line plot for mean Cell.Counts
+  geom_point(size = 3, alpha = 0.5) +
+  geom_ribbon(aes(ymin = mean_Bcas1_pos_MBP_pos - se_Bcas1_pos_MBP_pos, ymax = mean_Bcas1_pos_MBP_pos + se_Bcas1_pos_MBP_pos, fill = Genotype), alpha = 0.2, color = NA) +  # Error ribbon for standard deviation
+  labs(
+    x = "Distance from Pia (% total cortical thickness)",
+    y = expression("Proportion within bin (%)"),
+    color = "Genotype",
+    fill = "Genotype"
+  ) +
+  theme_minimal()  +
+  scale_colour_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_fill_manual(values = c("dodgerblue", "firebrick1")) +
+  theme(legend.position = "bottom")  # Optional: Adjust legend position
+png(filename = "p30_Ctnnd2_lineplot_Bcas1_pos_MBP_pos_counts_proportional_binned.png", width = 1200, height = 850, res = 300)
+  Bcas1_pos_MBP_pos_binned_density_plot
+  dev.off()
+Bcas1_pos_MBP_pos_binned_density_plot
+```
+
+```{r}
+# statistics for Bcas1+/MBP- (NFOL) counts
+Bcas1_pos_MBP_neg = lm(Bcas1_pos_MBP_neg ~ bin * Genotype,
+           data = combined_detections_BCas1MBPbinned_counts_animal)
+summary(Bcas1_pos_MBP_neg)
+Anova(Bcas1_pos_MBP_neg, type = "II")
+```
+
+```{r}
+library(plotrix)
+#line plot for Bcas1+/MBP- (NFOL) Counts
+combined_detections_BCas1MBPbinned_counts_animal_summary <- combined_detections_BCas1MBPbinned_counts_animal %>%
+  group_by(bin, Genotype) %>%
+  summarise(
+    mean_Bcas1_pos_MBP_neg = mean(Bcas1_pos_MBP_neg),
+    se_Bcas1_pos_MBP_neg = std.error(Bcas1_pos_MBP_neg),
+    .groups = "drop"
+  )
+#reorder so WT is listed first in legend
+combined_detections_BCas1MBPbinned_counts_animal_summary$Genotype <- factor(combined_detections_BCas1MBPbinned_counts_animal_summary$Genotype, levels = c("WT", "KO"))
+
+# Create ggplot with lines and shaded error regions
+Bcas1_pos_MBP_neg_binned_density_plot <- # Create the plot
+ggplot(combined_detections_BCas1MBPbinned_counts_animal_summary, aes(x = bin, y = mean_Bcas1_pos_MBP_neg, color = Genotype, group = Genotype)) +
+  geom_line(size = 1) +  # Line plot for mean Cell.Counts
+  geom_point(size = 3, alpha = 0.5) +
+  geom_ribbon(aes(ymin = mean_Bcas1_pos_MBP_neg - se_Bcas1_pos_MBP_neg, ymax = mean_Bcas1_pos_MBP_neg + se_Bcas1_pos_MBP_neg, fill = Genotype), alpha = 0.2, color = NA) +  # Error ribbon for standard deviation
+  labs(
+    x = "Distance from Pia (% total cortical thickness)",
+    y = expression("Proportion within bin (%)"),
+    color = "Genotype",
+    fill = "Genotype"
+  ) +
+  theme_minimal()  +
+  scale_colour_manual(values = c("dodgerblue", "firebrick1")) +
+  scale_fill_manual(values = c("dodgerblue", "firebrick1")) +
+  theme(legend.position = "bottom")  # Optional: Adjust legend position
+png(filename = "p30_Ctnnd2_lineplot_Bcas1_pos_MBP_neg_counts_proportional_binned.png", width = 1200, height = 850, res = 300)
+  Bcas1_pos_MBP_neg_binned_density_plot
+  dev.off()
+Bcas1_pos_MBP_neg_binned_density_plot
+```

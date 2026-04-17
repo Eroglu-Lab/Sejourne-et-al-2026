@@ -1,0 +1,118 @@
+---
+title: "zbtb20_wtvko_promoters_edger"
+author: "G Sejourne"
+date: "2026-02-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("vidger")
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+
+```{r}
+library(dplyr)
+
+#read in P28 snRNAseq data
+res_rna <- read.csv("./data/neun_neg_Wilcoxon_results_260120.csv")
+
+rownames(res_rna) <- res_rna$KO_n
+res_rna <- subset(res_rna, select = c(KO_l, KO_p) )
+colnames(res_rna) = c('logFC_rna', 'pval_rna')
+
+res_rna$gene <- rownames(res_rna)
+```
+
+```{r}
+# annotate genes as CpG islands
+library(dplyr)
+cpg_clustered <- read.table("union_cpg.bed", sep = "\t")
+ 
+cpg_promoters <- cpg_clustered[c(4)]
+head(cpg_promoters)
+```
+
+```{r}
+library(dplyr)
+wt.gene.list <- read.csv('wt.gene.list.csv')
+wt.gene.list <- wt.gene.list[,2]
+ko.gene.list <- read.csv('ko.gene.list.csv')
+ko.gene.list <- ko.gene.list[,2]
+intersect.gene.list <- read.csv('intersect.gene.list.csv')
+intersect.gene.list <- intersect.gene.list[,2]
+
+res_combined <- res_rna %>%
+  mutate(
+    sig_rna     = pval_rna < 0.05 & abs(abs(logFC_rna) > 0.3219),
+
+    peakset = case_when(
+      gene %in% wt.gene.list ~ 'wt_unique',
+      gene %in% ko.gene.list ~ 'ko_unique',
+      gene %in% intersect.gene.list ~ 'intersect'
+    ),
+    cpg = gene %in% cpg_promoters$V4,
+    
+    color_group = ifelse(sig_rna, as.character(peakset), "Not_sig")
+  )
+
+write.csv(res_combined, './data/cutrun_rnaseq_res_combined.csv')
+
+```
+
+```{r}
+library(ggrepel)
+plot_data <- res_combined[!is.na(res_combined$peakset),]
+plot_data <- plot_data[order(rownames(plot_data)), ]
+
+ggplot(plot_data, aes(x = logFC_rna, y = -log(pval_rna, 10))) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey60") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey60") +
+
+  geom_point(
+    aes(color = color_group, alpha = sig_rna),
+    size = 2
+  ) +
+
+  scale_color_manual(values = c(
+    "intersect" = "purple",
+    "ko_unique" = "firebrick1",
+    "wt_unique" = "dodgerblue",
+    "Not_sig"  = "gray70"
+  )) +
+
+  scale_alpha_manual(values = c(`TRUE` = 1, `FALSE` = 0.3)) +
+
+  labs(
+    x = "RNA-seq log2FC (KO vs WT)",
+    y = "RNA-seq -log10pVal (KO vs WT)",
+    color = "Direction",
+    title = "mRNA expression of Zbtb20 target genes (P28 NeuN- nuclei)"
+  ) +
+  xlim(-1, 1.5) +
+  #ylim(0, 130) +
+
+  theme_classic(base_size = 12) +
+  geom_text_repel(
+    data = plot_data %>% filter(gene %in% c("Zbtb20", "Maml2", "Tcf4", "Zeb1", "Zmiz1", "Nfia", "Grin2b", "Camk2a", "Dlg2", "Ctnnb1", "Ptprd", "Celf2", "Rbfox1", "Zbtb7c", "Pbx1", "Pou3f2", "Pou2f1")),
+    #max.overlaps = 100,
+    aes(label = gene),
+    min.segment.length = 0,
+    size = 6,
+    #fontface = "bold",
+    box.padding = 0.5,
+    #fill = "white"
+  )
+
+ggsave('./edger_plots/p28snrnaseq_FCvsPval_sigrna.png')
+
+```

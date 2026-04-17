@@ -1,0 +1,530 @@
+---
+title: "ctnnd2_rnaseq_de_vc_cleaned"
+author: "Gabi Sejourne"
+date: "04/17/26"
+output: html_document
+---
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Increase timeout
+options(timeout = 300)
+
+# Fix repos
+options(repos = BiocManager::repositories())
+
+# CRAN installer
+installifnot <- function(pckgName){
+  if (!require(pckgName, character.only = TRUE)) {
+    install.packages(pckgName, dependencies = TRUE)
+    library(pckgName, character.only = TRUE)
+  }
+}
+
+cran_pkgs <- c("BiocManager", "remotes", "tidyverse", "plotly", "RNAseqQC", "ggbreak", "aplot", "patchwork")
+
+for (pkg in cran_pkgs){
+  installifnot(pkg)
+}
+
+# Bioconductor installer
+installBiocifnot <- function(pckgName){
+  if (!require(pckgName, character.only = TRUE)) {
+    BiocManager::install(pckgName)
+    library(pckgName, character.only = TRUE)
+  }
+}
+
+bioc_pkgs <- c("DESeq2", "biomaRt", "org.Mm.eg.db", "clusterProfiler", 
+               "enrichplot", "VennDetail", "EnhancedVolcano", "apeglm", "pheatmap")
+
+for (pkg in bioc_pkgs){
+  installBiocifnot(pkg)
+}
+
+# Install GitHub package separately
+if (!require("rWSBIM2122")) {
+  remotes::install_github("UCLouvain-CBIO/rWSBIM2122")
+  library(rWSBIM2122)
+}
+
+library(rWSBIM2122)
+library(DESeq2)
+library(tidyverse)
+library(clusterProfiler)
+library(biomaRt)
+library(org.Mm.eg.db)
+library(enrichplot)
+library(fgsea)
+library(msigdbr)
+library(VennDetail)
+library(EnhancedVolcano)
+library(apeglm)
+library(readxl)
+library(gplots)
+library(viridis)
+library(RNAseqQC)
+library(dplyr)
+library(ggplot2)
+library(purrr)
+library(tidyr)
+library(tibble)
+library(magrittr)
+library(pheatmap)
+library(ggbreak)
+library(patchwork)
+```
+
+
+```{r load data for VC only}
+counts_dir <- "counts"
+
+counts_list_vc <- 
+  intersect(list.files(counts_dir, pattern='VC'), 
+                         list.files(counts_dir, pattern = 'txt$')
+)
+#reads in each counts file
+counts_in_vc <- lapply(paste(counts_dir, counts_list_vc, sep = "/"), read.table, header = TRUE)
+#subset just the geneids and counts from each file so that each row is a gene and each column is the counts for a sample
+
+counts_combined_vc <- data.frame(counts_in_vc[[1]][,7])
+for (i in seq.int(2,length(counts_in_vc))){
+  #print(i)
+  current_column <- counts_in_vc[[i]][,7]
+  counts_combined_vc[(i)] <- current_column
+}
+#label rows with gene names
+rows <- counts_in_vc[[1]][,1]
+rownames(counts_combined_vc) = rows
+
+#label columns with names of input files
+cols <- counts_list_vc
+colnames(counts_combined_vc) = cols
+```
+
+
+```{r load ctnnd2 counts for WT vs KO VC only}
+#group samples by experimental groups
+#Genotype: WT KO 
+#Sex: M F 
+#Region: VC 
+genotype <- c(1:length(counts_list_vc))
+sex <- c(1:length(counts_list_vc))
+genotype_sex <- c(1:length(counts_list_vc))
+
+for (i in 1:length(counts_list_vc)){
+    genotype[i] <- strsplit(counts_list_vc[i], "_")[[1]][4]
+    sex[i] <- str_sub(strsplit(counts_list_vc[i], "_")[[1]][3], 2, 2)
+    genotype_sex[i] <- paste(genotype[i], sex[i])
+}
+
+#make coldata for DESeq2
+coldata <- data.frame(cols)
+#coldata$sample <- cols
+coldata$Genotype <- genotype
+coldata$Sex <- sex
+
+# Construct a DESeqDataSet object
+dds_vc <- DESeqDataSetFromMatrix(countData = counts_combined_vc,
+                              colData = coldata,
+                              design = ~ Sex + Genotype)
+
+```
+
+
+```{r load ctnnd2 counts for WT vs KO VC only}
+# Run DESeq2
+dds_vc <- DESeq(dds_vc)
+
+res_vc <- results(dds_vc,
+               contrast = c("Genotype", "KO", "WT")) # we do this so that `WT` becomes the group we're comparing to
+
+resNoFilt <- results(dds_vc, independentFiltering=FALSE)
+
+dds_vc$Genotype <- factor(dds_vc$Genotype, levels=c("WT", "KO"))
+
+vsd <- vst(dds_vc, blind=FALSE)
+rld <- rlog(dds_vc, blind=FALSE)
+ntd <- normTransform(dds_vc)
+
+#saveRDS(dds_vc, file = "deseq_results_vc.rds")
+```
+```{r}
+# Plot sample clustering
+set.seed(1)
+plot_sample_clustering(vsd, anno_vars = c("Genotype", "Sex"), distance = "euclidean")
+```
+
+
+```{r}
+# PCA plots for various numbers of PCs to identify which explain genotype variability
+plot_pca_scatters(vsd, n_PCs = 5, color_by = "Genotype", shape_by = "Sex")
+```
+
+```{r}
+# save PCA plots for PCs 1 and 2
+plot_pca(vsd, PC_x = 1, PC_y = 2, color_by = "Genotype", shape_by = "Sex", scale_feats = FALSE, point_rel_size = 4)
+plot_pca
+ggsave(filename = "./plots/pca_vc_PC1_PC2.png", height = 6, width = 6)
+
+# save PCA plots for PCs 1 and 3
+plot_pca(vsd, PC_x = 1, PC_y = 3, color_by = "Genotype", shape_by = "Sex", scale_feats = FALSE, point_rel_size = 4) 
+plot_pca
+ggsave(filename = "./plots/pca_vc_PC1_PC3.png", height = 6, width = 6)
+
+```
+
+
+```{r Shrinking log fold-changes for low-count genes 1}
+plotMA(res_vc)
+
+resultsNames(dds_vc)
+# Output - 
+# "Intercept"            "Condition_mock_vs_KD"
+
+# How do we switch the order of the second coefficient so that this reads "Condition_KD_vs_mock"
+coldata$Genotype <- factor(coldata$Genotype, levels = c("WT", "KO"))
+
+# Repeat DESeq steps
+# Construct a DESeqDataSet object
+dds_vc <- DESeqDataSetFromMatrix(countData = na.omit(counts_combined_vc),
+                              colData = na.omit(coldata),
+                              design = ~ Genotype) 
+# Run DESeq2
+dds_vc <- DESeq(dds_vc)
+
+resultsNames(dds_vc)
+# Output - 
+# "Intercept"            "Condition_KD_vs_mock"
+
+res_shrunk_vc <- lfcShrink(dds_vc, 
+                        coef = "Genotype_KO_vs_WT",
+                        type = "apeglm") 
+# Here's a nice article on empirical Bayes estimation - http://varianceexplained.org/r/empirical_bayes_baseball/
+
+res_shrunk_vc 
+
+
+# Compare the output of - 
+plotMA(res_vc)
+# and
+plotMA(res_shrunk_vc)
+
+# Convert `res_shrunk_vc` to a dataframe called `res_df_vc`. We will use this for enrichment analyses
+res_df_vc <- as_tibble(res_shrunk_vc, rownames = "genes")
+res_df_vc_filtered <- res_df_vc[!is.na(res_df_vc$padj),]
+
+#save the diffexp data
+write.csv(res_df_vc_filtered, file = "deseq2_vc_bayes_estimation.csv")
+```
+
+
+
+```{r make volcano of DESeq2 normalized data with shrinkage}
+library(ggplot2)
+library(dplyr)
+library(DESeq2)
+library(ggbreak)
+
+# Define your gene list for labeling
+gene_list <- c("Gjb6", "Pvalb", "Nfix", "Nfib", "Gad1", "Ctnnd2")
+
+# Assuming res_shrunk_vc is your shrunken DESeqResults object
+# Convert the DESeqResults object to a data frame
+df_res <- as.data.frame(res_shrunk_vc)
+
+# Add a column for gene names (assuming the row names of res_vc are the gene names)
+df_res$Gene <- rownames(df_res)
+
+# Define the conditions for color-coding based on significance and fold change
+df_res$Significance <- case_when(
+  df_res$padj < 0.05 & abs(df_res$log2FoldChange) > 0.15 ~ 'FDR & Log2FC', 
+  df_res$padj < 0.05 ~ 'FDR',
+  abs(df_res$log2FoldChange) > 0.15 ~ 'Log2FC',
+  TRUE ~ 'Not sig.'
+)
+
+# Filter for the selected genes in the gene list
+df_labels <- df_res %>% filter(Gene %in% gene_list)
+
+# Calculate the xend and yend values for labels (end of the connectors)
+df_labels <- df_labels %>%
+  mutate(
+    xend = ifelse(log2FoldChange > 0, log2FoldChange + ((10*log2FoldChange)^2)*0.04, log2FoldChange - 0.1),
+    yend = ifelse(log2FoldChange > 0, -log10(padj) + 0.8, -log10(padj) + -5*log2FoldChange)
+  )
+df_labels[df_labels$Gene == "Ctnnd2",]$xend = 0.8
+df_labels[df_labels$Gene == "Ctnnd2",]$yend = 42.5
+
+# Create the ggplot
+p <- ggplot(df_res, aes(x = log2FoldChange, y = -log10(padj))) +
+  # Plot points with color based on significance
+  geom_point(aes(color = Significance), size = 2, alpha = 0.5) +  # Add transparency to points
+  scale_color_manual(values = c('Not sig.' = 'lightgray', 
+                                'Log2FC' = 'lightblue', 
+                                'FDR' = 'black', 
+                                'FDR & Log2FC' = 'orange')) +  # Match the colors to your original plot
+  # Add connectors with different angles depending on FC
+  geom_segment(data = df_labels,
+               aes(x = log2FoldChange, y = -log10(padj), 
+                   xend = xend, yend = yend),  # Use xend and yend calculated earlier
+               arrow = arrow(type = "closed", length = unit(0.1, "inches")),
+               size = 0.5, color = "black") +  # Add connector lines
+  # Add labels with white background at the end of the arrows
+  geom_label(data = df_labels, aes(x = xend, y = yend, label = Gene), 
+             size = 5, fill = "white", color = "black", label.size = 0.2, 
+             label.padding = unit(0.01, "lines")) +  # Boxed labels with white background
+  # Add horizontal and vertical dotted lines at the cutoff values
+  geom_vline(xintercept = c(-0.15, 0.15), linetype = "dotted", color = "black", size = 0.7) +  # FC cutoff
+  geom_hline(yintercept = -log10(0.05), linetype = "dotted", color = "black", size = 0.7) +  # p-value cutoff
+  theme_minimal() +
+  labs(title = "WT vs KO mRNA expression",
+       x = "log2 Fold Change",
+       y = expression("-log"[10] * "FDR"),
+       color = "Significance") +  # Add a legend title for clarity
+  scale_x_continuous(limits = c(-0.5, 1)) +  # Set x-axis limits
+  scale_y_continuous(limits = c(0, 50)) +  # Set y-axis limits
+  theme(legend.position = "none") +  # Hide the legend (if not needed)
+  theme(axis.title = element_text(size = 14),
+        axis.text = element_text(size = 12),
+        plot.title = element_text(size = 16, hjust = 0.5,),
+        legend.position = "bottom")+
+  scale_y_break(c(6,40), scales = 0.2, ticklabels = c(40, 45)) 
+
+# Save the plot
+ppi <- 300
+png(file = "./plots/volcano_vc_ggplot.png", width = 5*ppi, height = 5*ppi, res = ppi, bg = "transparent")
+print(p)
+dev.off()
+
+p
+ggsave(filename = "./plots/volcano_vc_break.png", width = 6, height = 6, units = "in")
+
+```
+
+```{r GO}
+sig_genes_vc <- filter(res_df_vc, padj < 0.05)
+
+sig_up <- filter(sig_genes_vc, log2FoldChange > 0.15)
+rownames(sig_up) <- sig_up$genes
+
+sig_up_genes <- sig_up$genes
+
+
+go_ora_up <- enrichGO(gene = sig_up_genes,
+                   OrgDb = org.Mm.eg.db,
+                   keyType = "SYMBOL",
+                   universe= res_df_vc$genes,
+                   ont = "BP",
+                   readable = TRUE) # maps gene IDs to gene names
+head(go_ora_up)
+
+# Visualization
+# convert GeneRatio to numeric
+go_ora_up <- as.data.frame(go_ora_up)
+go_ora_up$GeneRatio <- sapply(go_ora_up$GeneRatio, function(x) {
+  # Split the string by "/"
+  parts <- strsplit(x, "/")[[1]]
+  # Convert the parts to numeric and divide
+  as.numeric(as.numeric(parts[1]) / as.numeric(parts[2]), 3)
+})
+
+ppi <- 300
+barplot_DEG_up <- ggplot(go_ora_up, aes(x=GeneRatio, y=Description, fill=log(p.adjust,10)))+ 
+  geom_bar(stat = "identity", color = "black") +
+  ggtitle("GO (Biological Process)") +
+  theme(plot.title =element_text(hjust = 0.75, vjust = 2.12, size = 24)) +
+  ylab("Biological Process")+
+  theme(plot.margin = unit(c(0.3, 0.1, 0, 0.3), "cm")) +
+  theme(axis.text.y = element_text(size = 20)) +
+  theme(axis.title.y = element_text(size = 24)) +
+  guides(fill = guide_colorbar(position = "right", title = expression("log"[10]~"pval"))) +
+  scale_fill_gradient2(low = "orange", mid = "white", high = "lightblue", midpoint = -1.4)
+png(filename = "./plots/go_bp_vc_up.png", res = ppi, width = 10*ppi, height = 3*ppi)
+barplot_DEG_up
+dev.off()
+barplot_DEG_up
+
+
+#save go output
+
+write.csv(sig_up, file = "genes_up_vc.csv")
+write.csv(go_ora_up, file = "genes_up_goBP_vc.csv")
+```
+
+
+```{r}
+sig_down <- filter(sig_genes_vc, log2FoldChange < -0.15)
+
+sig_down_genes <- sig_down$genes
+
+
+go_ora_down <- enrichGO(gene = sig_down_genes,
+                   OrgDb = org.Mm.eg.db,
+                   keyType = "SYMBOL",
+                   universe = res_df_vc$genes,
+                   ont = "BP",
+                   readable = TRUE) # maps gene IDs to gene names
+head(go_ora_down)
+
+# Visualization
+# bar plot
+
+# Visualization
+# convert GeneRatio to numeric
+go_ora_down <- as.data.frame(go_ora_down)
+go_ora_down$GeneRatio <- sapply(go_ora_down$GeneRatio, function(x) {
+  # Split the string by "/"
+  parts <- strsplit(x, "/")[[1]]
+  # Convert the parts to numeric and divide
+  as.numeric(as.numeric(parts[1]) / as.numeric(parts[2]), 3)
+})
+
+go_ora_down$Description <- str_wrap(go_ora_down$Description, width = 30)
+
+ppi <- 300
+barplot_DEG_down <- ggplot(head(go_ora_down, n = 3), aes(x=GeneRatio, y=Description, fill=log(p.adjust,10)))+ 
+  geom_bar(stat = "identity", color = "black") +
+  ggtitle("GO (Biological Process)") +
+  theme(plot.title =element_text(hjust = 0.75, vjust = 2.12, size = 24)) +
+  ylab("Biological Process")+
+  theme(plot.margin = unit(c(0.3, 0.1, 0, 0.3), "cm")) +
+  theme(axis.text.y = element_text(size = 20)) +
+  theme(axis.title.y = element_text(size = 24)) +
+  guides(fill = guide_colorbar(position = "right", title = expression("log"[10]~"pval"))) +
+  scale_fill_gradient2(low = "orange", mid = "white", high = "lightblue", midpoint = -9.4)
+png(filename = "./plots/go_bp_vc_down.png", res = ppi, width = 10*ppi, height = 3*ppi)
+barplot_DEG_down
+dev.off()
+barplot_DEG_down
+
+
+#save go output
+
+write.csv(sig_down, file = "genes_down_vc.csv")
+write.csv(go_ora_down, file = "genes_down_goBP_vc.csv")
+```
+
+
+```{r}
+#heatmap settings
+myheatcol <- grDevices::colorRampPalette(c("lightblue","white", "orange"))(256)
+
+
+df <- as.data.frame(colData(dds_vc)) 
+df <- df %>% arrange(Genotype)
+
+# select oxphos genes
+oxphos <- strsplit(go_ora_down[go_ora_down$Description == "oxidative phosphorylation",]$geneID, "/")[[1]]
+
+toPlot_oxphos <- vsd[rownames(vsd) %in% oxphos,] 
+toPlot_oxphos <- toPlot_oxphos[,rownames(df)]
+
+
+#set quantile break points <https://slowkow.com/notes/pheatmap-tutorial/>
+quantile_breaks <- function(xs, n = 100) {
+  breaks <- quantile(xs, probs = seq(0, 1, length.out = n))
+  breaks[!duplicated(breaks)]
+}
+toPlot_oxphos_breaks <- quantile_breaks(assay(toPlot_oxphos)[,1], n = 101)
+
+mt <- toPlot_oxphos[rownames(toPlot_oxphos) %in% append(sig_up_genes,sig_down_genes),]
+# Your list of genes
+    #genelist <- c("Gjb6","Dcx", "Fabp7") 
+# Labels to plot
+    labels <- rownames(mt) 
+# Set the rest of genes to ""
+    #labels[!labels %in% genelist] <- "" 
+    
+# Open a PNG device with a transparent background
+ppi <- 300
+png(file = "./plots/heatmap_oxphos_vc_by_sample.png", width = 6*ppi, height = 6*ppi, res = ppi, bg = "transparent")
+
+heatmap_oxphos <- pheatmap(assay(mt), 
+                          cluster_rows=TRUE, 
+                          cluster_cols=FALSE,
+                          show_colnames = FALSE,
+                          #show_rownames = FALSE,
+                          annotation_col=df[c(2)], 
+                          #annotation_row = devmt_DEGs[c(2)],
+                          scale = "row", 
+                          fontsize_row = 10, 
+                          fontsize_col = 10, 
+                          color = myheatcol,
+                          #color = viridis(length(toPlot_devmt_breaks)),
+                          #breaks = toPlot_oxphos_breaks, 
+                          angle_col = 315, 
+                          main = "Oxidative phosphorylation genes", 
+                          cellheight = 10, cellwidth = 10,
+                          labels_row = labels, 
+                          #cutree_rows = 2,
+                          gaps_col = 12
+                          )
+
+#annotation_row = data.frame(Age = c(rep("P7", 27), rep("P28", 23)))
+dev.off()
+heatmap_oxphos
+
+```
+
+```{r}
+stem <- strsplit(go_ora_up[go_ora_up$Description == "stem cell population maintenance",]$geneID, "/")[[1]]
+
+toPlot_stem <- vsd[rownames(vsd) %in% stem,] 
+toPlot_stem <- toPlot_stem[,rownames(df)]
+
+#set quantile break points <https://slowkow.com/notes/pheatmap-tutorial/>
+quantile_breaks <- function(xs, n = 100) {
+  breaks <- quantile(xs, probs = seq(0, 1, length.out = n))
+  breaks[!duplicated(breaks)]
+}
+toPlot_stem_breaks <- quantile_breaks(assay(toPlot_stem)[,1], n = 101)
+
+mt <- toPlot_stem[rownames(toPlot_stem) %in% append(sig_up_genes,sig_down_genes),]
+
+ann_col <- (df[c(2)])
+
+ann_colors = list(
+  Genotype = c(WT="dodgerblue", KO="firebrick1"))
+
+# Create the heatmap
+heatmap_stem <- pheatmap(assay(mt), 
+                          cluster_rows=TRUE, 
+                          cluster_cols=FALSE,
+                          show_colnames = FALSE,
+                          #show_rownames = FALSE,
+                          annotation_col=ann_col, 
+                          annotation_colors = ann_colors,
+                          #annotation_row = devmt_DEGs[c(2)],
+                          scale = "row", 
+                          fontsize_row = 10, 
+                          fontsize_col = 10, 
+                          color = myheatcol,
+                          #color = viridis(length(toPlot_devmt_breaks)),
+                          #breaks = toPlot_stem_breaks, 
+                          angle_col = 315, 
+                          main = "Stemness genes", 
+                          cellheight = 10, cellwidth = 10,
+                          labels_row = labels, 
+                          treeheight_row = 0,
+                          #cutree_rows = 2,
+                          gaps_col = 12,
+                         annotation_names_col = FALSE
+                          )
+
+# Open a PNG device with a transparent background
+ppi <- 300
+
+png(file = "./plots/heatmap_stem_vc_by_sample.png", width = 6*ppi, height = 6*ppi, res = ppi, bg = "transparent")
+  heatmap_stem
+# Close the PNG device
+dev.off()
+heatmap_stem
+
+```
+
+```{r print session info}
+sessionInfo()
+
+```

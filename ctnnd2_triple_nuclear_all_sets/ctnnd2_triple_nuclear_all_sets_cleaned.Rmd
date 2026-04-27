@@ -23,6 +23,12 @@ if(!require(multcompView)){install.packages("multcompView")}
 if(!require(dplyr)){install.packages("dplyr")}
 if(!require(rcompanion)){install.packages("rcompanion")}
 
+#data
+DAPI_total = rbind(read.csv("Data/output_DAPI_set1.csv"), read.csv("Data/output_DAPI_set3.csv"))
+NeuN_total = rbind(read.csv("Data/output_NeuN_set1.csv"), read.csv("Data/output_NeuN_set3.csv"))
+Olig2_total = rbind(read.csv("Data/output_Olig2_set1.csv"), read.csv("Data/output_Olig2_set3.csv"))
+Sox9_total = rbind(read.csv("Data/output_Sox9_set1.csv"), read.csv("Data/output_Sox9_set3.csv"))
+
 decoder <- read.csv("Data/Decoder_trinuc_all_sets.csv")
 ```
 
@@ -34,11 +40,15 @@ DAPI_binned_organized = read.csv("Data/DAPI_Counts_Normalized_Pixel_Based_Unblin
 
 colnames(DAPI_binned_organized)[colnames(DAPI_binned_organized) == "Normalized.distance.from.pia...."] <- 'dist_norm'
 
+DAPI_binned_organized = DAPI_binned_organized[!(DAPI_binned_organized$Animal %in% c("L49761-8", "L49763-2", "L49761-5", "L49763-5")),]
+
 #NeuN data
 NeuN_binned = read.csv("Data/NeuN_Counts_Normalized_Pixel_Based_Unblinded.csv")
 NeuN_binned_organized = read.csv("Data/NeuN_Counts_Normalized_Pixel_Based_Unblinded_Organized.csv")
 
 colnames(NeuN_binned_organized)[colnames(NeuN_binned_organized) == "Normalized.distance.from.pia...."] <- 'dist_norm'
+
+NeuN_binned_organized = NeuN_binned_organized[!(NeuN_binned_organized$Animal %in% c("L49761-8", "L49763-2", "L49761-5", "L49763-5")),]
 
 #Olig2 data
 Olig2_binned = read.csv("Data/Olig2_Counts_Normalized_Pixel_Based_Unblinded.csv")
@@ -46,11 +56,15 @@ Olig2_binned_organized = read.csv("Data/Olig2_Counts_Normalized_Pixel_Based_Unbl
 
 colnames(Olig2_binned_organized)[colnames(Olig2_binned_organized) == "Normalized.distance.from.pia...."] <- 'dist_norm'
 
+Olig2_binned_organized = Olig2_binned_organized[!(Olig2_binned_organized$Animal %in% c("L49761-8", "L49763-2", "L49761-5", "L49763-5")),]
+
 #Sox9 data
 Sox9_binned = read.csv("Data/Sox9_Counts_Normalized_Pixel_Based_Unblinded.csv")
 Sox9_binned_organized = read.csv("Data/Sox9_Counts_Normalized_Pixel_Based_Unblinded_Organized.csv")
 
 colnames(Sox9_binned_organized)[colnames(Sox9_binned_organized) == "Normalized.distance.from.pia...."] <- 'dist_norm'
+
+Sox9_binned_organized = Sox9_binned_organized[!(Sox9_binned_organized$Animal %in% c("L49761-8", "L49763-2", "L49761-5", "L49763-5")),]
 
 ```
 
@@ -131,25 +145,6 @@ png(filename = "p21_Ctnnd2_lineplot_NeuN_binned.png", width = 1200, height = 850
   dev.off()
 NeuN_binned_density_plot
 ```
-```{r}
-library(car)
-NeuN_binned_organized$dist_norm <- as.factor(NeuN_binned_organized$dist_norm)
-model_neun = lm(Cell.Counts ~ dist_norm + Genotype + dist_norm:Genotype,
-           data = NeuN_binned_organized)
-summary(model_neun)
-
-Anova(model_neun, type = "II")
-
-```
-
-```{r}
-library(multcompView)
-library(lsmeans)
-library(multcomp)
-
-leastsquare <- lsmeans(model_neun, pairwise ~ Genotype | dist_norm, adjust = "tukey")
-summary(leastsquare$contrasts)
-```
 
 ```{r}
 Sox9_binned_summary <- Sox9_binned_organized %>%
@@ -188,25 +183,6 @@ png(filename = "p21_Ctnnd2_lineplot_Sox9_binned.png", width = 1200, height = 850
   Sox9_binned_density_plot
   dev.off()
 Sox9_binned_density_plot
-```
-```{r}
-library(car)
-Sox9_binned_organized$dist_norm <- as.factor(Sox9_binned_organized$dist_norm)
-model_sox9 = lm(Cell.Counts ~ dist_norm + Genotype + dist_norm:Genotype,
-           data = Sox9_binned_organized)
-summary(model_sox9)
-
-Anova(model_sox9, type = "II")
-
-```
-
-```{r}
-library(multcompView)
-library(lsmeans)
-library(multcomp)
-
-leastsquare <- lsmeans(model_sox9, pairwise ~ Genotype | dist_norm, adjust = "tukey")
-summary(leastsquare$contrasts)
 ```
 
 
@@ -251,23 +227,36 @@ Olig2_binned_density_plot
 
 ```{r}
 library(car)
-Olig2_binned_organized$dist_norm <- as.factor(Olig2_binned_organized$dist_norm)
-model_olig2 = lm(Cell.Counts ~ dist_norm + Genotype + dist_norm:Genotype,
-           data = Olig2_binned_organized)
-summary(model_olig2)
+model = lm(Cell.Counts ~ dist_norm + Genotype + dist_norm:Genotype,
+           data = DAPI_binned_organized)
+summary(model)
 
-Anova(model_olig2, type = "II")
-
+Anova(model, type = "II")
 ```
 
 ```{r}
-library(multcompView)
-library(lsmeans)
-library(multcomp)
+library(car)
+model = lm(Cell.Counts ~ dist_norm + Genotype + dist_norm:Genotype,
+           data = Sox9_binned_organized)
+summary(model)
 
-leastsquare <- lsmeans(model_olig2, pairwise ~ Genotype | dist_norm, adjust = "tukey")
-summary(leastsquare$contrasts)
+Anova(model, type = "II")
 ```
 
+```{r}
+library(car)
+model = lm(Cell.Counts ~ dist_norm + Genotype + dist_norm:Genotype,
+           data = NeuN_binned_organized)
+summary(model)
 
+Anova(model, type = "II")
+```
 
+```{r}
+library(car)
+model = lm(Cell.Counts ~ dist_norm + Genotype + dist_norm:Genotype,
+           data = Olig2_binned_organized)
+summary(model)
+
+Anova(model, type = "II")
+```

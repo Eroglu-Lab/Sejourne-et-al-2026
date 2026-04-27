@@ -212,11 +212,17 @@ plotMA(res_vc)
 plotMA(res_shrunk_vc)
 
 # Convert `res_shrunk_vc` to a dataframe called `res_df_vc`. We will use this for enrichment analyses
-res_df_vc <- as_tibble(res_shrunk_vc, rownames = "genes")
-res_df_vc_filtered <- res_df_vc[!is.na(res_df_vc$padj),]
+res_shrunk_df_vc <- as_tibble(res_shrunk_vc, rownames = "genes")
+res_shrunk_df_vc_filtered <- res_shrunk_df_vc[!is.na(res_shrunk_df_vc$padj),]
 
 #save the diffexp data
-write.csv(res_df_vc_filtered, file = "deseq2_vc_bayes_estimation.csv")
+write.csv(res_shrunk_df_vc_filtered, file = "deseq2_vc_bayes_estimation.csv")
+
+# Convert `res_vc` to a dataframe called `res_df_vc`. We will use this for enrichment analyses
+res_df_vc <- as_tibble(res_vc, rownames = "genes")
+res_df_vc_filtered <- res_df_vc[!is.na(res_df_vc$padj),]
+
+write.csv(res_df_vc_filtered, file = "deseq2_vc.csv")
 ```
 
 
@@ -237,12 +243,23 @@ df_res <- as.data.frame(res_shrunk_vc)
 # Add a column for gene names (assuming the row names of res_vc are the gene names)
 df_res$Gene <- rownames(df_res)
 
+#reorder so featured genes come last for plotting 
+# Reorder
+df_res <- df_res %>%
+  arrange(desc(factor(Gene, levels = c(gene_list, setdiff(Gene, gene_list)))))
+
 # Define the conditions for color-coding based on significance and fold change
-df_res$Significance <- case_when(
+df_res$color_group <- case_when(
+  df_res$Gene %in% gene_list ~ 'featured',
   df_res$padj < 0.05 & abs(df_res$log2FoldChange) > 0.15 ~ 'FDR & Log2FC', 
   df_res$padj < 0.05 ~ 'FDR',
   abs(df_res$log2FoldChange) > 0.15 ~ 'Log2FC',
-  TRUE ~ 'Not sig.'
+  TRUE ~ 'ns'
+)
+
+df_res$alpha_group <- case_when(
+  df_res$Gene %in% gene_list ~ 'featured',
+  TRUE ~ 'other'
 )
 
 # Filter for the selected genes in the gene list
@@ -257,14 +274,19 @@ df_labels <- df_labels %>%
 df_labels[df_labels$Gene == "Ctnnd2",]$xend = 0.8
 df_labels[df_labels$Gene == "Ctnnd2",]$yend = 42.5
 
+df_labels[df_labels$Gene == "Pvalb",]$xend = -0.58
+df_labels[df_labels$Gene == "Pvalb",]$yend = 5.8
+
 # Create the ggplot
 p <- ggplot(df_res, aes(x = log2FoldChange, y = -log10(padj))) +
   # Plot points with color based on significance
-  geom_point(aes(color = Significance), size = 2, alpha = 0.5) +  # Add transparency to points
-  scale_color_manual(values = c('Not sig.' = 'lightgray', 
+  geom_point(aes(color = color_group, alpha = alpha_group), size = 2) +  # Add transparency to points
+  scale_color_manual(values = c('featured' = 'black',
+                                'ns' = 'lightgray', 
                                 'Log2FC' = 'lightblue', 
-                                'FDR' = 'black', 
+                                'FDR' = 'lightgray', 
                                 'FDR & Log2FC' = 'orange')) +  # Match the colors to your original plot
+  scale_alpha_manual(values = c('featured' = 1, 'other' = 0.5), guide = "none") +
   # Add connectors with different angles depending on FC
   geom_segment(data = df_labels,
                aes(x = log2FoldChange, y = -log10(padj), 
@@ -283,7 +305,7 @@ p <- ggplot(df_res, aes(x = log2FoldChange, y = -log10(padj))) +
        x = "log2 Fold Change",
        y = expression("-log"[10] * "FDR"),
        color = "Significance") +  # Add a legend title for clarity
-  scale_x_continuous(limits = c(-0.5, 1)) +  # Set x-axis limits
+  scale_x_continuous(limits = c(-0.6, 1)) +  # Set x-axis limits
   scale_y_continuous(limits = c(0, 50)) +  # Set y-axis limits
   theme(legend.position = "none") +  # Hide the legend (if not needed)
   theme(axis.title = element_text(size = 14),

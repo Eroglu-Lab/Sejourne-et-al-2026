@@ -93,7 +93,6 @@ zbtb20_mbd_cutrun_glia:
 - narrowPeak: 
 	- *all_peaks_calculated.narrowPeak output from CaRAS peak-calling run separately for WT and KO sample sets
 - CSV: 
-	- *all_peaks_calculated.csv output from CaRAS peak-calling run separately for WT and KO sample sets
 	- *known_results*.csv output from HOMER motif enrichment analysis for each of WT-only and KO-only promoter sets
 - Shell scripts: 
 	- run_caras_new.sh wrapper to run CaRAS pipeline on slurm cluster
@@ -122,9 +121,6 @@ zbtb20_mbd_cutrun_glia:
 zbtb20_cutrun_astro: 
 - narrowPeak: 
 	- *all_peaks_calculated.narrowPeak output from CaRAS peak-calling run separately for Zbtb20 and H3K4me3 sample sets
-
-- TSV: 
-	- *all_peaks_calculated.tsv output from CaRAS peak-calling run separately for Zbtb20 and H3k4me3sample sets
 
 - CSV: 
 	- ASTRO_Wilcoxon_results_250106.csv output from differential expression analysis (Wilcoxon rank-sum) of astrocyte cluster from snrnaseq

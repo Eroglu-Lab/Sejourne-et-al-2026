@@ -126,11 +126,11 @@ zbtb20_cutrun_astro:
 	- ASTRO_Wilcoxon_results_250106.csv output from differential expression analysis (Wilcoxon rank-sum) of astrocyte cluster from snrnaseq
 	- *_genes_WT.csv astrocyte subtype-defining genes from snrnaseq
 
-- R-markdown
+- R-markdown:
 	- chipseeker_caras_zbtb20_cleaned.Rmd uses Chipseeker package to annotate genomic features of loci bound by Zbtb20 and calculate proportions of each feature type
 	- chipseeker_caras_h3k4me3_cleaned.Rmd uses Chipseeker package to annotate genomic features of loci with H3k4me3 histone modification and calculate proportions of each feature type
 	- pull_promoters_TSS_cleaned.Rmd uses GenomicRanges package to generate BED files with genomic locations of TSSs within Zbtb20 promoter set
 	- zbtb20_snrnaseq_overlap_cleaned.Rmd cross-references snrnaseq data to identify zbtb20-bound promoters with astrocyte subtype enrichment and differential expression in Ctnnd2-KO
 
-- Python scripts
+- Python scripts:
 	- 260427_layer_enriched_dotplots_cleaned.ipynb plots expression of astrocyte subtype-defining genes in WT and KO astrocyte nuclei

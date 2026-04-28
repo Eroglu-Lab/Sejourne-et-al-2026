@@ -46,7 +46,7 @@ annotated.peaks.df <- as.data.frame(annotated.peaks)
 # rename chipseeker annotations
 names(annotated.peaks.df)[names(annotated.peaks.df) == "annotation"] <- "chipseeker_annot"
 
-caras_annotation <- read.csv('./data/zbtb20_wt_all_peaks_calculated.csv')
+caras_annotation <- read.delim('./data/zbtb20_wt_all_peaks_calculated.tsv')
 
 chipseeker_col <- annotated.peaks.df[, c("V4", "chipseeker_annot", "SYMBOL")]
 
